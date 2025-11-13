@@ -50,7 +50,8 @@ class Settings(BaseSettings):
 
     model_config = {
         "env_file": ".env",
-        "env_file_encoding": "utf-8"
+        "env_file_encoding": "utf-8",
+        "extra": "ignore"  # Allow extra fields in .env file to be ignored
     }
 
 
