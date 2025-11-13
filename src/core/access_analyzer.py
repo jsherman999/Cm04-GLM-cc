@@ -28,11 +28,39 @@ logger = logging.getLogger(__name__)
 
 
 class AccessAnalyzer:
-    """Analyzes access control for Linux filesystem paths"""
+    """Analyzes access control for Linux/AIX filesystem paths"""
 
     def __init__(self):
         self.permission_cache: Dict[str, FileSystemPermission] = {}
         self.user_cache: Dict[str, UserCapabilities] = {}
+        self.os_cache: Dict[str, str] = {}  # Cache OS type per host
+
+    async def detect_os(self, conn_info: SSHConnectionInfo) -> str:
+        """Detect OS type (Linux or AIX) for a host"""
+        if conn_info.hostname in self.os_cache:
+            return self.os_cache[conn_info.hostname]
+        
+        try:
+            result = await ssh_engine.execute_command(conn_info, "uname -s")
+            if result.exit_status == 0:
+                os_type = result.stdout.strip()
+                # Normalize to 'AIX' or 'Linux'
+                if 'AIX' in os_type.upper():
+                    os_type = 'AIX'
+                else:
+                    os_type = 'Linux'
+                self.os_cache[conn_info.hostname] = os_type
+                logger.info(f"Detected OS for {conn_info.hostname}: {os_type}")
+                return os_type
+            else:
+                # Default to Linux if detection fails
+                logger.warning(f"Could not detect OS for {conn_info.hostname}, defaulting to Linux")
+                self.os_cache[conn_info.hostname] = 'Linux'
+                return 'Linux'
+        except Exception as e:
+            logger.error(f"Error detecting OS for {conn_info.hostname}: {e}, defaulting to Linux")
+            self.os_cache[conn_info.hostname] = 'Linux'
+            return 'Linux'
         self.group_cache: Dict[str, DomainGroup] = {}
 
     async def analyze_path_access(self, conn_info: SSHConnectionInfo, code_path: str) -> List[AccessResult]:
@@ -145,30 +173,54 @@ class AccessAnalyzer:
     async def get_login_users(self, conn_info: SSHConnectionInfo) -> List[str]:
         """Get list of users who can log into the system"""
         try:
-            # Get users with valid shells (can log in)
-            # Use POSIX-compliant shell syntax for AIX compatibility
-            cmd = """
-            getent passwd 2>/dev/null || cat /etc/passwd | while IFS=: read user x uid gid gecos home shell; do
-                # Check if shell is not empty and not a nologin/false shell
-                case "$shell" in
-                    *bash|*sh|*ksh|*zsh|*csh|*tcsh)
-                        # Check if home directory exists
-                        if [ -d "$home" ]; then
-                            echo "$user"
-                        fi
-                        ;;
-                    *)
-                        # Skip users with nologin, false, or empty shells
-                        ;;
-                esac
-            done | sort -u
-            """
+            os_type = await self.detect_os(conn_info)
+            
+            if os_type == 'AIX':
+                # AIX: Use lsuser to get all users, filter by valid shells
+                cmd = """
+                lsuser -a shell home ALL 2>/dev/null | awk -F' ' '
+                NR > 1 {
+                    user=$1
+                    for(i=2; i<=NF; i++) {
+                        if($i ~ /^shell=/) {
+                            split($i, s, "=")
+                            shell=s[2]
+                        }
+                        if($i ~ /^home=/) {
+                            split($i, h, "=")
+                            home=h[2]
+                        }
+                    }
+                    # Check for valid login shells
+                    if (shell ~ /bash|sh|ksh|zsh|csh|tcsh/ && shell !~ /false|nologin/) {
+                        print user
+                    }
+                }' | sort -u
+                """
+            else:
+                # Linux: Use getent or /etc/passwd
+                cmd = """
+                getent passwd 2>/dev/null || cat /etc/passwd | while IFS=: read user x uid gid gecos home shell; do
+                    # Check if shell is not empty and not a nologin/false shell
+                    case "$shell" in
+                        *bash|*sh|*ksh|*zsh|*csh|*tcsh)
+                            # Check if home directory exists
+                            if [ -d "$home" ]; then
+                                echo "$user"
+                            fi
+                            ;;
+                        *)
+                            # Skip users with nologin, false, or empty shells
+                            ;;
+                    esac
+                done | sort -u
+                """
 
             result = await ssh_engine.execute_command(conn_info, cmd)
 
             if result.exit_status == 0:
                 users = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-                logger.debug(f"Found {len(users)} login users on {conn_info.hostname}")
+                logger.debug(f"Found {len(users)} login users on {conn_info.hostname} ({os_type})")
                 return users
             else:
                 logger.error(f"Failed to get login users on {conn_info.hostname}: {result.stderr}")
@@ -239,23 +291,37 @@ class AccessAnalyzer:
             return self.user_cache[cache_key]
 
         try:
+            os_type = await self.detect_os(conn_info)
+            
+            # The 'id' command works on both Linux and AIX
+            # id -gn: primary group name
+            # id -Gn: all group names (includes primary + secondary, and domain groups on joined systems)
             commands = [
-                (conn_info, f"id -gn {username}"),  # Primary group
-                (conn_info, f"id -Gn {username}"),  # All groups
+                (conn_info, f"id -gn {username} 2>/dev/null || echo 'ERROR'"),  # Primary group
+                (conn_info, f"id -Gn {username} 2>/dev/null || echo 'ERROR'"),  # All groups (includes domain groups)
                 (conn_info, f"sudo -n -l -U {username} 2>/dev/null || echo 'NO_SUDO'"),  # Sudo rights
             ]
 
             results = await ssh_engine.execute_commands_parallel(commands)
 
-            if results[0].exit_status != 0:
+            if results[0].exit_status != 0 or results[0].stdout.strip() == 'ERROR':
                 logger.error(f"Could not get primary group for user {username} on {conn_info.hostname}")
                 return None
 
             primary_group = results[0].stdout.strip()
 
             # Parse groups (remove primary group to avoid duplicates)
-            all_groups = [g.strip() for g in results[1].stdout.split() if g.strip()]
-            secondary_groups = [g for g in all_groups if g != primary_group]
+            # The 'id -Gn' command returns all groups including domain groups on joined systems
+            all_groups_output = results[1].stdout.strip()
+            if all_groups_output == 'ERROR':
+                logger.error(f"Could not get groups for user {username} on {conn_info.hostname}")
+                all_groups = [primary_group]
+                secondary_groups = []
+            else:
+                all_groups = [g.strip() for g in all_groups_output.split() if g.strip()]
+                secondary_groups = [g for g in all_groups if g != primary_group]
+            
+            logger.debug(f"User {username} on {conn_info.hostname} ({os_type}): primary={primary_group}, all_groups={all_groups}")
 
             # Check sudo access
             sudo_output = results[2].stdout.strip()
