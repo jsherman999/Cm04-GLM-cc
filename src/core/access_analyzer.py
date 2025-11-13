@@ -76,38 +76,61 @@ class AccessAnalyzer:
 
         try:
             # Use ls -ld for maximum portability across Unix/Linux/AIX
-            # This works consistently across all platforms
-            ls_cmd = f"ls -ldn '{path}' 2>/dev/null"
-            result = await ssh_engine.execute_command(conn_info, ls_cmd)
+            # Combine all commands in one execution to avoid event loop issues
+            combined_cmd = f"""
+            # Get file info
+            LS_OUTPUT=$(ls -ldn '{path}' 2>/dev/null) || exit 1
+            echo "$LS_OUTPUT"
+            
+            # Extract UID and GID from ls output
+            OWNER_UID=$(echo "$LS_OUTPUT" | awk '{{print $3}}')
+            GROUP_GID=$(echo "$LS_OUTPUT" | awk '{{print $4}}')
+            
+            # Resolve UID to username
+            echo "---OWNER---"
+            id -un $OWNER_UID 2>/dev/null || echo "$OWNER_UID"
+            
+            # Resolve GID to groupname
+            echo "---GROUP---"
+            getent group $GROUP_GID 2>/dev/null | cut -d: -f1 || grep "^[^:]*:[^:]*:$GROUP_GID:" /etc/group 2>/dev/null | cut -d: -f1 || echo "$GROUP_GID"
+            """
+            
+            result = await ssh_engine.execute_command(conn_info, combined_cmd)
 
             if result.exit_status != 0:
                 logger.warning(f"Path {path} not found on {conn_info.hostname}")
                 return None
 
-            # Parse ls -ld output: permissions links owner group size date time name
-            # Example: drwxr-xr-x 7 210884 111 4096 Jun  3 10:14 /home/jsherma2/
-            parts = result.stdout.split()
-            if len(parts) < 3:
-                logger.error(f"Unexpected ls output for {path} on {conn_info.hostname}: {result.stdout}")
+            # Parse the output
+            output_lines = result.stdout.strip().split('\n')
+            if len(output_lines) < 4:
+                logger.error(f"Unexpected command output for {path} on {conn_info.hostname}: {result.stdout}")
+                return None
+            
+            # First line is ls output
+            ls_output = output_lines[0]
+            parts = ls_output.split()
+            if len(parts) < 4:
+                logger.error(f"Unexpected ls output for {path} on {conn_info.hostname}: {ls_output}")
                 return None
 
             permissions_str = parts[0]  # e.g., drwxr-xr-x
-            owner_uid = parts[2]  # numeric UID
-            group_gid = parts[3]  # numeric GID
+            
+            # Find owner and group in output (after markers)
+            owner = None
+            group = None
+            for i, line in enumerate(output_lines):
+                if line == "---OWNER---" and i + 1 < len(output_lines):
+                    owner = output_lines[i + 1].strip()
+                elif line == "---GROUP---" and i + 1 < len(output_lines):
+                    group = output_lines[i + 1].strip()
+            
+            if not owner or not group:
+                logger.error(f"Failed to parse owner/group for {path} on {conn_info.hostname}")
+                return None
             
             # Determine if it's a directory
             is_directory = permissions_str.startswith('d')
-            
-            # Get the actual username and group name from UID/GID
-            # Try to resolve UID to username
-            id_cmd = f"id -un {owner_uid} 2>/dev/null || echo '{owner_uid}'"
-            id_result = await ssh_engine.execute_command(conn_info, id_cmd)
-            owner = id_result.stdout.strip()
-            
-            # Try to resolve GID to groupname (try getent first, fall back to /etc/group)
-            grp_cmd = f"getent group {group_gid} 2>/dev/null | cut -d: -f1 || grep '^[^:]*:[^:]*:{group_gid}:' /etc/group 2>/dev/null | cut -d: -f1 || echo '{group_gid}'"
-            grp_result = await ssh_engine.execute_command(conn_info, grp_cmd)
-            group = grp_result.stdout.strip()
 
             # Convert permissions string to rwx format (skip first char which is file type)
             rwx_perm = permissions_str[1:] if len(permissions_str) > 1 else "---------"
