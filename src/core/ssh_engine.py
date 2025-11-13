@@ -34,8 +34,32 @@ class SSHConnectionPool:
     def __init__(self, max_connections: int = 100):
         self.max_connections = max_connections
         self.connections: Dict[str, asyncssh.SSHClientConnection] = {}
-        self.semaphore = asyncio.Semaphore(max_connections)
-        self.connection_lock = asyncio.Lock()
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._connection_lock: Optional[asyncio.Lock] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _ensure_loop_resources(self):
+        """Ensure semaphore and lock are bound to current event loop"""
+        current_loop = asyncio.get_event_loop()
+        
+        # If loop changed or resources not initialized, recreate them
+        if self._loop != current_loop or self._semaphore is None:
+            self._loop = current_loop
+            self._semaphore = asyncio.Semaphore(self.max_connections)
+            self._connection_lock = asyncio.Lock()
+            logger.debug(f"Initialized connection pool resources for event loop {id(current_loop)}")
+
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        """Get semaphore bound to current event loop"""
+        self._ensure_loop_resources()
+        return self._semaphore
+
+    @property
+    def connection_lock(self) -> asyncio.Lock:
+        """Get lock bound to current event loop"""
+        self._ensure_loop_resources()
+        return self._connection_lock
 
     async def get_connection(self, conn_info: SSHConnectionInfo) -> asyncssh.SSHClientConnection:
         """Get or create SSH connection"""
