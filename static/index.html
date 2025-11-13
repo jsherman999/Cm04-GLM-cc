@@ -14,6 +14,27 @@
         </header>
 
         <main class="main-content">
+            <div class="content-wrapper">
+                <!-- Left Sidebar: Completed Audits -->
+                <aside class="audit-sidebar">
+                    <div class="audit-sidebar-header">
+                        <h2>Completed Audits</h2>
+                        <button class="refresh-button" onclick="refreshAuditHistory()" title="Refresh">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="audit-list" id="auditList">
+                        <!-- Audit items will be populated here -->
+                        <div class="audit-empty">No audits yet. Run your first scan to get started!</div>
+                    </div>
+                </aside>
+
+                <!-- Main Content Area -->
+                <div class="main-content-area">
             <!-- Upload Section -->
             <section class="upload-section" id="uploadSection">
                 <h2>Submit Scan Request</h2>
@@ -143,6 +164,54 @@
                 </div>
             </section>
 
+            <!-- Differences Section (shown after rerun) -->
+            <section class="differences-section" id="differencesSection" style="display: none;">
+                <h2>Access Control Differences</h2>
+                <div class="differences-summary">
+                    <div class="summary-cards">
+                        <div class="summary-card added">
+                            <h3>Added</h3>
+                            <span id="differencesAdded">0</span>
+                        </div>
+                        <div class="summary-card removed">
+                            <h3>Removed</h3>
+                            <span id="differencesRemoved">0</span>
+                        </div>
+                        <div class="summary-card modified">
+                            <h3>Modified</h3>
+                            <span id="differencesModified">0</span>
+                        </div>
+                        <div class="summary-card total">
+                            <h3>Total Changes</h3>
+                            <span id="differencesTotal">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="differences-actions">
+                    <button class="download-button" onclick="downloadDifferences('csv')">Download Differences (CSV)</button>
+                    <button class="download-button" onclick="downloadDifferences('json')">Download Differences (JSON)</button>
+                    <button class="close-button" onclick="closeDifferences()">Close</button>
+                </div>
+
+                <div class="differences-table-container">
+                    <table class="differences-table" id="differencesTable">
+                        <thead>
+                            <tr>
+                                <th>Change Type</th>
+                                <th>Hostname</th>
+                                <th>Code Path</th>
+                                <th>User ID</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody id="differencesTableBody">
+                            <!-- Differences will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <!-- Debug Section -->
             <section class="debug-section" id="debugSection">
                 <h2>Debug Console</h2>
@@ -154,6 +223,8 @@
                     <div id="debugLogs"></div>
                 </div>
             </section>
+                </div><!-- close main-content-area -->
+            </div><!-- close content-wrapper -->
         </main>
 
         <footer class="footer">

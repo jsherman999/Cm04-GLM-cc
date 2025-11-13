@@ -159,3 +159,48 @@ class HealthCheck(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     ssh_connections_available: int = Field(..., description="Available SSH connections")
     database_connected: bool = Field(..., description="Database connection status")
+
+
+class AuditSummary(BaseModel):
+    """Summary of a completed audit for the audit history panel"""
+    job_id: str = Field(..., description="Unique job identifier")
+    job_name: Optional[str] = Field(None, description="Job name")
+    run_number: str = Field(..., description="Human-readable run identifier")
+    status: JobStatus = Field(..., description="Current job status")
+    created_at: datetime = Field(..., description="When audit was created")
+    started_at: Optional[datetime] = Field(None, description="When audit started")
+    completed_at: Optional[datetime] = Field(None, description="When audit completed")
+    run_duration_seconds: Optional[int] = Field(None, description="Total run time in seconds")
+    total_hosts: int = Field(..., description="Number of hosts scanned")
+    completed_hosts: int = Field(default=0, description="Successfully completed hosts")
+    failed_hosts: int = Field(default=0, description="Failed hosts")
+    is_archived: bool = Field(default=False, description="Whether audit is archived")
+    parent_job_id: Optional[str] = Field(None, description="ID of previous audit if this is a rerun")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Job tags")
+
+
+class AccessDifference(BaseModel):
+    """Represents a difference in access between two audit runs"""
+    hostname: str = Field(..., description="Hostname")
+    code_path: str = Field(..., description="Code path")
+    change_type: str = Field(..., description="Type of change: added, removed, modified")
+    user_id: str = Field(..., description="User identifier")
+    previous_access: Optional[AccessResult] = Field(None, description="Previous access details")
+    current_access: Optional[AccessResult] = Field(None, description="Current access details")
+    description: str = Field(..., description="Human-readable description of the change")
+
+
+class AuditComparison(BaseModel):
+    """Comparison results between two audit runs"""
+    current_job_id: str = Field(..., description="Current audit job ID")
+    previous_job_id: str = Field(..., description="Previous audit job ID")
+    comparison_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    differences: List[AccessDifference] = Field(default_factory=list, description="List of differences found")
+    summary: Dict[str, int] = Field(default_factory=dict, description="Summary statistics")
+    has_changes: bool = Field(..., description="Whether any changes were detected")
+
+
+class RerunRequest(BaseModel):
+    """Request to rerun an audit"""
+    job_id: str = Field(..., description="ID of the audit to rerun")
+    compare_with_previous: bool = Field(default=True, description="Whether to compare with previous run")

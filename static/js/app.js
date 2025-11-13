@@ -3,14 +3,18 @@
 class CM04Scanner {
     constructor() {
         this.currentJobId = null;
+        this.parentJobId = null;
         this.websocket = null;
         this.selectedFiles = [];
+        this.currentComparison = null;
         this.init();
     }
 
     init() {
         this.setupEventListeners();
-        this.loadExistingJobs();
+        this.loadAuditHistory();
+        // Refresh audit history every 30 seconds
+        setInterval(() => this.loadAuditHistory(), 30000);
     }
 
     setupEventListeners() {
@@ -315,6 +319,15 @@ class CM04Scanner {
 
         // Load and display results
         await this.loadJobResults();
+        
+        // Reload audit history
+        await this.loadAuditHistory();
+        
+        // If this was a rerun, automatically show differences
+        if (this.parentJobId) {
+            await this.showDifferences(this.currentJobId, this.parentJobId);
+            this.parentJobId = null; // Clear after showing
+        }
     }
 
     handleJobError(data) {
@@ -567,6 +580,306 @@ class CM04Scanner {
     closeErrorModal() {
         document.getElementById('errorModal').style.display = 'none';
     }
+
+    // Audit History Management
+    async loadAuditHistory() {
+        try {
+            const response = await fetch('/api/v1/audits');
+            const data = await response.json();
+            
+            this.renderAuditList(data.audits || []);
+        } catch (error) {
+            console.error('Error loading audit history:', error);
+        }
+    }
+
+    renderAuditList(audits) {
+        const auditList = document.getElementById('auditList');
+        
+        if (audits.length === 0) {
+            auditList.innerHTML = '<div class="audit-empty">No audits yet. Run your first scan to get started!</div>';
+            return;
+        }
+
+        auditList.innerHTML = audits.map(audit => {
+            const duration = audit.run_duration_seconds 
+                ? this.formatDuration(audit.run_duration_seconds)
+                : 'N/A';
+            
+            const createdDate = new Date(audit.created_at).toLocaleString();
+            
+            return `
+                <div class="audit-item ${audit.status.toLowerCase()}" data-job-id="${audit.job_id}">
+                    <div class="audit-item-header">
+                        <span class="audit-run-number">${audit.run_number}</span>
+                        <span class="audit-status ${audit.status.toLowerCase()}">${audit.status}</span>
+                    </div>
+                    <div class="audit-item-details">
+                        <div><strong>${audit.job_name || 'Unnamed Audit'}</strong></div>
+                        <div>📅 ${createdDate}</div>
+                        <div>🖥️ ${audit.total_hosts} hosts</div>
+                        <div>⏱️ Duration: ${duration}</div>
+                        ${audit.status === 'completed' 
+                            ? `<div>✓ ${audit.completed_hosts} completed, ✗ ${audit.failed_hosts} failed</div>`
+                            : audit.status === 'running'
+                            ? `<div>⏳ ${audit.completed_hosts} / ${audit.total_hosts} completed</div>`
+                            : ''
+                        }
+                    </div>
+                    <div class="audit-item-actions">
+                        ${audit.status === 'completed' || audit.status === 'failed'
+                            ? `<button class="audit-action-btn" onclick="rerunAudit('${audit.job_id}')">Rerun</button>`
+                            : audit.status === 'running'
+                            ? `<button class="audit-action-btn" onclick="viewRunningAudit('${audit.job_id}')">View</button>`
+                            : ''
+                        }
+                        ${audit.status === 'completed' || audit.status === 'failed'
+                            ? `<button class="audit-action-btn archive" onclick="archiveAudit('${audit.job_id}')">Archive</button>`
+                            : ''
+                        }
+                        <button class="audit-action-btn purge" onclick="purgeAudit('${audit.job_id}')">Purge</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes}m ${secs}s`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
+    }
+
+    async rerunAudit(jobId) {
+        try {
+            this.showLoading('Starting audit rerun...');
+            
+            const response = await fetch(`/api/v1/audits/${jobId}/rerun`, {
+                method: 'POST'
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to rerun audit');
+            }
+            
+            const result = await response.json();
+            this.hideLoading();
+            
+            this.addDebugLog('info', `Rerun started: ${result.job_id}`);
+            
+            // Start monitoring the new job
+            this.startJobMonitoring(result.job_id);
+            
+            // Load audit history to show the new running job
+            await this.loadAuditHistory();
+            
+            // If parent job exists, we'll compare after completion
+            if (result.parent_job_id) {
+                this.currentJobId = result.job_id;
+                this.parentJobId = result.parent_job_id;
+            }
+            
+        } catch (error) {
+            this.hideLoading();
+            this.showError(`Failed to rerun audit: ${error.message}`);
+        }
+    }
+
+    async archiveAudit(jobId) {
+        if (!confirm('Are you sure you want to archive this audit? It will be hidden but data will be preserved.')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/v1/audits/${jobId}/archive`, {
+                method: 'POST'
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to archive audit');
+            }
+            
+            this.addDebugLog('info', `Audit archived: ${jobId}`);
+            await this.loadAuditHistory();
+            
+        } catch (error) {
+            this.showError(`Failed to archive audit: ${error.message}`);
+        }
+    }
+
+    async purgeAudit(jobId) {
+        if (!confirm('Are you sure you want to permanently delete this audit? This cannot be undone.')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/v1/audits/${jobId}/purge`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to purge audit');
+            }
+            
+            this.addDebugLog('info', `Audit purged: ${jobId}`);
+            await this.loadAuditHistory();
+            
+        } catch (error) {
+            this.showError(`Failed to purge audit: ${error.message}`);
+        }
+    }
+
+    async viewRunningAudit(jobId) {
+        this.currentJobId = jobId;
+        this.startJobMonitoring(jobId);
+        
+        // Scroll to progress section
+        document.getElementById('progressSection').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async showDifferences(currentJobId, previousJobId) {
+        try {
+            this.showLoading('Comparing audit results...');
+            
+            const response = await fetch(`/api/v1/audits/compare/${currentJobId}/${previousJobId}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to compare audits');
+            }
+            
+            const comparison = await response.json();
+            this.hideLoading();
+            
+            this.renderDifferences(comparison);
+            
+        } catch (error) {
+            this.hideLoading();
+            this.showError(`Failed to compare audits: ${error.message}`);
+        }
+    }
+
+    renderDifferences(comparison) {
+        const differencesSection = document.getElementById('differencesSection');
+        
+        // Update summary
+        document.getElementById('differencesAdded').textContent = comparison.summary.added || 0;
+        document.getElementById('differencesRemoved').textContent = comparison.summary.removed || 0;
+        document.getElementById('differencesModified').textContent = comparison.summary.modified || 0;
+        document.getElementById('differencesTotal').textContent = comparison.summary.total_differences || 0;
+        
+        // Render differences table
+        const tbody = document.getElementById('differencesTableBody');
+        
+        if (comparison.differences.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No differences found between the two audit runs.</td></tr>';
+        } else {
+            tbody.innerHTML = comparison.differences.map(diff => `
+                <tr>
+                    <td><span class="change-badge ${diff.change_type}">${diff.change_type}</span></td>
+                    <td>${diff.hostname}</td>
+                    <td>${diff.code_path}</td>
+                    <td>${diff.user_id}</td>
+                    <td>${diff.description}</td>
+                </tr>
+            `).join('');
+        }
+        
+        // Store comparison for download
+        this.currentComparison = comparison;
+        
+        // Show the differences section
+        differencesSection.style.display = 'block';
+        differencesSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    downloadDifferences(format) {
+        if (!this.currentComparison) {
+            this.showError('No comparison data available');
+            return;
+        }
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        
+        if (format === 'csv') {
+            const csv = this.convertDifferencesToCSV(this.currentComparison.differences);
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `cm04_differences_${timestamp}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } else if (format === 'json') {
+            const json = JSON.stringify(this.currentComparison, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `cm04_differences_${timestamp}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    convertDifferencesToCSV(differences) {
+        const headers = ['Change Type', 'Hostname', 'Code Path', 'User ID', 'Description'];
+        const rows = differences.map(diff => [
+            diff.change_type,
+            diff.hostname,
+            diff.code_path,
+            diff.user_id,
+            diff.description
+        ]);
+        
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+        
+        return csvContent;
+    }
+
+    closeDifferences() {
+        document.getElementById('differencesSection').style.display = 'none';
+        this.currentComparison = null;
+    }
+}
+
+// Global functions for inline event handlers
+function refreshAuditHistory() {
+    window.cm04Scanner.loadAuditHistory();
+}
+
+function rerunAudit(jobId) {
+    window.cm04Scanner.rerunAudit(jobId);
+}
+
+function archiveAudit(jobId) {
+    window.cm04Scanner.archiveAudit(jobId);
+}
+
+function purgeAudit(jobId) {
+    window.cm04Scanner.purgeAudit(jobId);
+}
+
+function viewRunningAudit(jobId) {
+    window.cm04Scanner.viewRunningAudit(jobId);
+}
+
+function downloadDifferences(format) {
+    window.cm04Scanner.downloadDifferences(format);
+}
+
+function closeDifferences() {
+    window.cm04Scanner.closeDifferences();
 }
 
 // Global functions for inline event handlers

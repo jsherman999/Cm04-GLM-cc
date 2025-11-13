@@ -17,7 +17,7 @@ from .access_analyzer import access_analyzer
 from .report_generator import report_generator
 from ..models.schemas import (
     HostInput, JobResult, JobStatus, JobProgress, HostScanResult,
-    ScanRequest, AccessResult
+    ScanRequest, AccessResult, AuditSummary, AuditComparison, AccessDifference
 )
 from ..config.settings import settings
 
@@ -42,6 +42,9 @@ class JobState:
     failed_hosts: int
     error_message: Optional[str]
     tags: Optional[List[str]]
+    is_archived: bool = False
+    parent_job_id: Optional[str] = None
+    run_number: Optional[str] = None
 
 
 class CM04Scanner:
@@ -432,3 +435,191 @@ class CM04Scanner:
                 (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
             )
         }
+
+    def get_audit_history(self, include_archived: bool = False) -> List[AuditSummary]:
+        """Get list of all audit runs for the history panel"""
+        audits = []
+        
+        for job_id, job_state in self.jobs.items():
+            # Skip archived jobs unless requested
+            if job_state.is_archived and not include_archived:
+                continue
+            
+            # Calculate run duration
+            run_duration = None
+            if job_state.started_at and job_state.completed_at:
+                run_duration = int((job_state.completed_at - job_state.started_at).total_seconds())
+            
+            # Generate run number if not set
+            run_number = job_state.run_number or f"RUN-{job_state.created_at.strftime('%Y%m%d-%H%M%S')}"
+            
+            audit = AuditSummary(
+                job_id=job_id,
+                job_name=job_state.job_name,
+                run_number=run_number,
+                status=job_state.status,
+                created_at=job_state.created_at,
+                started_at=job_state.started_at,
+                completed_at=job_state.completed_at,
+                run_duration_seconds=run_duration,
+                total_hosts=job_state.total_hosts,
+                completed_hosts=job_state.completed_hosts,
+                failed_hosts=job_state.failed_hosts,
+                is_archived=job_state.is_archived,
+                parent_job_id=job_state.parent_job_id,
+                tags=job_state.tags or []
+            )
+            audits.append(audit)
+        
+        # Sort by creation date (newest first)
+        audits.sort(key=lambda a: a.created_at, reverse=True)
+        return audits
+
+    def archive_audit(self, job_id: str) -> bool:
+        """Archive an audit (hide from UI but keep in storage)"""
+        if job_id not in self.jobs:
+            return False
+        
+        self.jobs[job_id].is_archived = True
+        logger.info(f"Archived audit {job_id}")
+        return True
+
+    def purge_audit(self, job_id: str) -> bool:
+        """Permanently delete an audit from storage"""
+        if job_id not in self.jobs:
+            return False
+        
+        # Remove from jobs dictionary
+        del self.jobs[job_id]
+        
+        # TODO: Also delete associated report files
+        reports_dir = settings.reports_dir
+        for report_file in reports_dir.glob(f"*{job_id}*"):
+            try:
+                report_file.unlink()
+                logger.info(f"Deleted report file: {report_file}")
+            except Exception as e:
+                logger.error(f"Error deleting report file {report_file}: {e}")
+        
+        logger.info(f"Purged audit {job_id}")
+        return True
+
+    async def rerun_audit(self, job_id: str, compare_with_previous: bool = True) -> str:
+        """Rerun an existing audit with the same hosts"""
+        if job_id not in self.jobs:
+            raise ValueError(f"Job {job_id} not found")
+        
+        original_job = self.jobs[job_id]
+        
+        # Create new job ID for the rerun
+        new_job_id = str(uuid.uuid4())
+        
+        # Generate new run number
+        run_number = f"RUN-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+        
+        # Start the new scan with reference to parent
+        await self.run_scan_job(
+            job_id=new_job_id,
+            hosts=original_job.hosts,
+            job_name=original_job.job_name,
+            tags=(original_job.tags or []) + ["rerun"]
+        )
+        
+        # Set parent job reference and run number
+        if new_job_id in self.jobs:
+            self.jobs[new_job_id].parent_job_id = job_id
+            self.jobs[new_job_id].run_number = run_number
+        
+        logger.info(f"Started rerun {new_job_id} of audit {job_id}")
+        return new_job_id
+
+    def compare_audits(self, current_job_id: str, previous_job_id: str) -> AuditComparison:
+        """Compare two audit runs and identify differences"""
+        if current_job_id not in self.jobs:
+            raise ValueError(f"Current job {current_job_id} not found")
+        if previous_job_id not in self.jobs:
+            raise ValueError(f"Previous job {previous_job_id} not found")
+        
+        current_job = self.jobs[current_job_id]
+        previous_job = self.jobs[previous_job_id]
+        
+        # Build maps of access results for comparison
+        def build_access_map(results: List[HostScanResult]) -> Dict[str, Dict[str, AccessResult]]:
+            """Build a map of hostname:path -> user_id -> AccessResult"""
+            access_map = {}
+            for result in results:
+                key = f"{result.hostname}:{result.code_path}"
+                if key not in access_map:
+                    access_map[key] = {}
+                for access in result.users_with_access:
+                    user_key = f"{access.user_id}:{access.privilege_type.value}"
+                    access_map[key][user_key] = access
+            return access_map
+        
+        current_map = build_access_map(current_job.results)
+        previous_map = build_access_map(previous_job.results)
+        
+        differences = []
+        
+        # Find added and modified access
+        for host_path, current_users in current_map.items():
+            hostname, code_path = host_path.split(":", 1)
+            previous_users = previous_map.get(host_path, {})
+            
+            for user_key, current_access in current_users.items():
+                if user_key not in previous_users:
+                    # New access granted
+                    differences.append(AccessDifference(
+                        hostname=hostname,
+                        code_path=code_path,
+                        change_type="added",
+                        user_id=current_access.user_id,
+                        previous_access=None,
+                        current_access=current_access,
+                        description=f"User {current_access.user_id} gained {current_access.privilege_type.value} access via {current_access.privilege_source}"
+                    ))
+                elif current_access != previous_users[user_key]:
+                    # Access modified
+                    differences.append(AccessDifference(
+                        hostname=hostname,
+                        code_path=code_path,
+                        change_type="modified",
+                        user_id=current_access.user_id,
+                        previous_access=previous_users[user_key],
+                        current_access=current_access,
+                        description=f"User {current_access.user_id} access modified"
+                    ))
+        
+        # Find removed access
+        for host_path, previous_users in previous_map.items():
+            hostname, code_path = host_path.split(":", 1)
+            current_users = current_map.get(host_path, {})
+            
+            for user_key, previous_access in previous_users.items():
+                if user_key not in current_users:
+                    # Access removed
+                    differences.append(AccessDifference(
+                        hostname=hostname,
+                        code_path=code_path,
+                        change_type="removed",
+                        user_id=previous_access.user_id,
+                        previous_access=previous_access,
+                        current_access=None,
+                        description=f"User {previous_access.user_id} lost {previous_access.privilege_type.value} access"
+                    ))
+        
+        # Calculate summary statistics
+        summary = {
+            "total_differences": len(differences),
+            "added": sum(1 for d in differences if d.change_type == "added"),
+            "removed": sum(1 for d in differences if d.change_type == "removed"),
+            "modified": sum(1 for d in differences if d.change_type == "modified")
+        }
+        
+        return AuditComparison(
+            current_job_id=current_job_id,
+            previous_job_id=previous_job_id,
+            differences=differences,
+            summary=summary,
+            has_changes=len(differences) > 0
+        )

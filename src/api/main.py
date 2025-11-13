@@ -250,6 +250,78 @@ async def cancel_job(job_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/audits")
+async def get_audit_history(include_archived: bool = False):
+    """Get audit history for the Completed Audits panel"""
+    try:
+        audits = scanner.get_audit_history(include_archived=include_archived)
+        return {"audits": audits, "total": len(audits)}
+    except Exception as e:
+        logger.error(f"Error getting audit history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/audits/{job_id}/rerun")
+async def rerun_audit(job_id: str, background_tasks: BackgroundTasks):
+    """Rerun an existing audit"""
+    try:
+        new_job_id = await scanner.rerun_audit(job_id, compare_with_previous=True)
+        return {
+            "job_id": new_job_id,
+            "parent_job_id": job_id,
+            "message": "Audit rerun started successfully",
+            "status_url": f"/api/v1/jobs/{new_job_id}"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error rerunning audit {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/audits/{job_id}/archive")
+async def archive_audit(job_id: str):
+    """Archive an audit (hide from UI but keep in storage)"""
+    try:
+        success = scanner.archive_audit(job_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        return {"message": "Audit archived successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error archiving audit {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/audits/{job_id}/purge")
+async def purge_audit(job_id: str):
+    """Permanently delete an audit"""
+    try:
+        success = scanner.purge_audit(job_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        return {"message": "Audit purged successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error purging audit {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/audits/compare/{current_job_id}/{previous_job_id}")
+async def compare_audits(current_job_id: str, previous_job_id: str):
+    """Compare two audit runs and get differences"""
+    try:
+        comparison = scanner.compare_audits(current_job_id, previous_job_id)
+        return comparison
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error comparing audits: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/jobs/{job_id}/reports")
 async def get_job_reports(job_id: str):
     """Get available reports for a job"""
