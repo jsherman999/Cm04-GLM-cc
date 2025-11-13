@@ -28,7 +28,7 @@ class ReportGenerator:
     def generate_csv_report(self, job_result: JobResult) -> Path:
         """
         Generate CSV report with the required format:
-        hostname, user_id, login_method, priv_granting_access
+        hostname, user_id, login_method, priv_granting_access, access_method, enabled
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"cm04_report_{job_result.job_id}_{timestamp}.csv"
@@ -43,6 +43,8 @@ class ReportGenerator:
                     'login_method',
                     'privilege_type',
                     'priv_granting_access',
+                    'access_method',
+                    'enabled',
                     'scan_timestamp'
                 ]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -60,6 +62,8 @@ class ReportGenerator:
                             'login_method': access.login_method.value,
                             'privilege_type': access.privilege_type.value,
                             'priv_granting_access': access.privilege_source,
+                            'access_method': access.access_method,
+                            'enabled': access.enabled,
                             'scan_timestamp': host_result.scan_timestamp.isoformat()
                         })
 

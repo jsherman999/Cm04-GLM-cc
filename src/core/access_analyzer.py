@@ -61,7 +61,91 @@ class AccessAnalyzer:
             logger.error(f"Error detecting OS for {conn_info.hostname}: {e}, defaulting to Linux")
             self.os_cache[conn_info.hostname] = 'Linux'
             return 'Linux'
-        self.group_cache: Dict[str, DomainGroup] = {}
+
+    async def is_user_local(self, conn_info: SSHConnectionInfo, username: str) -> bool:
+        """Check if user exists in /etc/passwd (is a local user)"""
+        try:
+            cmd = f"grep '^{username}:' /etc/passwd >/dev/null 2>&1 && echo 'YES' || echo 'NO'"
+            result = await ssh_engine.execute_command(conn_info, cmd)
+            is_local = result.stdout.strip() == 'YES'
+            logger.debug(f"User {username} on {conn_info.hostname}: local={is_local}")
+            return is_local
+        except Exception as e:
+            logger.error(f"Error checking if {username} is local on {conn_info.hostname}: {e}")
+            return False
+
+    async def is_account_enabled(self, conn_info: SSHConnectionInfo, username: str) -> bool:
+        """Check if user account is enabled (not locked, has valid shell)"""
+        try:
+            os_type = await self.detect_os(conn_info)
+            
+            if os_type == 'AIX':
+                # AIX: Check account status with lsuser
+                cmd = f"lsuser -a account_locked shell {username} 2>/dev/null"
+                result = await ssh_engine.execute_command(conn_info, cmd)
+                if result.exit_status != 0:
+                    return False
+                
+                output = result.stdout.strip()
+                # Parse output like: "username account_locked=false shell=/bin/ksh"
+                is_locked = 'account_locked=true' in output.lower()
+                has_valid_shell = any(shell in output for shell in ['bash', 'sh', 'ksh', 'zsh', 'csh', 'tcsh'])
+                has_nologin = 'nologin' in output.lower() or 'false' in output.lower()
+                
+                return not is_locked and has_valid_shell and not has_nologin
+            else:
+                # Linux: Check passwd -S for lock status and /etc/passwd for shell
+                cmd = f"""
+                # Check if account is locked
+                LOCK_STATUS=$(passwd -S {username} 2>/dev/null | awk '{{print $2}}')
+                # Get shell from /etc/passwd
+                SHELL=$(getent passwd {username} 2>/dev/null | cut -d: -f7)
+                echo "$LOCK_STATUS|$SHELL"
+                """
+                result = await ssh_engine.execute_command(conn_info, cmd)
+                if result.exit_status != 0:
+                    return False
+                
+                output = result.stdout.strip()
+                if '|' not in output:
+                    return False
+                
+                lock_status, shell = output.split('|', 1)
+                
+                # P = Password set (unlocked), L = Locked, NP = No password
+                is_locked = lock_status.strip() in ['L', 'LK']
+                has_valid_shell = any(s in shell for s in ['bash', 'sh', 'ksh', 'zsh', 'csh', 'tcsh'])
+                has_nologin = 'nologin' in shell.lower() or 'false' in shell.lower()
+                
+                return not is_locked and has_valid_shell and not has_nologin
+                
+        except Exception as e:
+            logger.error(f"Error checking if {username} is enabled on {conn_info.hostname}: {e}")
+            return False
+
+    async def get_domain_info(self, conn_info: SSHConnectionInfo) -> Optional[str]:
+        """Get the domain name the host is joined to (if any)"""
+        try:
+            # Try vastool first
+            cmd = "vastool info domain 2>/dev/null || echo 'NONE'"
+            result = await ssh_engine.execute_command(conn_info, cmd)
+            if result.exit_status == 0 and result.stdout.strip() not in ['NONE', '']:
+                domain = result.stdout.strip()
+                logger.debug(f"Host {conn_info.hostname} joined to domain: {domain}")
+                return domain
+            
+            # Try realm for systemd-based systems
+            cmd = "realm list 2>/dev/null | grep 'domain-name:' | awk '{print $2}' | head -1 || echo 'NONE'"
+            result = await ssh_engine.execute_command(conn_info, cmd)
+            if result.exit_status == 0 and result.stdout.strip() not in ['NONE', '']:
+                domain = result.stdout.strip()
+                logger.debug(f"Host {conn_info.hostname} joined to domain: {domain}")
+                return domain
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting domain info for {conn_info.hostname}: {e}")
+            return None
 
     async def analyze_path_access(self, conn_info: SSHConnectionInfo, code_path: str) -> List[AccessResult]:
         """
@@ -236,14 +320,28 @@ class AccessAnalyzer:
         access_results = []
 
         try:
+            # Determine login method and access method
+            is_local = await self.is_user_local(conn_info, username)
+            is_enabled = await self.is_account_enabled(conn_info, username)
+            login_method = LoginMethod.LOCAL if is_local else LoginMethod.DOMAIN
+            enabled_status = "Y" if is_enabled else "N"
+            
+            # Get domain info if not local
+            domain_name = None
+            if not is_local:
+                domain_name = await self.get_domain_info(conn_info)
+            
             # Check if user is owner
             if fs_perm.owner == username:
                 if self._check_owner_write_permission(fs_perm.permissions):
+                    access_method = "/etc/passwd" if is_local else (f"{domain_name}(owner)" if domain_name else "domain(owner)")
                     access_results.append(AccessResult(
                         user_id=username,
-                        login_method=LoginMethod.LOCAL,
+                        login_method=login_method,
                         privilege_type=PrivilegeType.OWNER,
-                        privilege_source="owner"
+                        privilege_source="owner",
+                        access_method=access_method,
+                        enabled=enabled_status
                     ))
                     logger.debug(f"User {username} has owner write access to {fs_perm.path} on {hostname}")
                 return access_results
@@ -255,11 +353,14 @@ class AccessAnalyzer:
 
             # Check sudo access
             if user_caps.has_sudo:
+                access_method = "/etc/passwd" if is_local else (f"{domain_name}(sudo)" if domain_name else "domain(sudo)")
                 access_results.append(AccessResult(
                     user_id=username,
-                    login_method=LoginMethod.LOCAL,
+                    login_method=login_method,
                     privilege_type=PrivilegeType.SUDO,
-                    privilege_source="sudo"
+                    privilege_source="sudo",
+                    access_method=access_method,
+                    enabled=enabled_status
                 ))
                 logger.debug(f"User {username} has sudo access to {fs_perm.path} on {hostname}")
 
@@ -268,11 +369,14 @@ class AccessAnalyzer:
             for group in user_groups:
                 if group == fs_perm.group:
                     if self._check_group_write_permission(fs_perm.permissions):
+                        access_method = "/etc/passwd" if is_local else (f"{domain_name}({group})" if domain_name else f"domain({group})")
                         access_results.append(AccessResult(
                             user_id=username,
-                            login_method=LoginMethod.LOCAL,
+                            login_method=login_method,
                             privilege_type=PrivilegeType.GROUP,
-                            privilege_source=group
+                            privilege_source=group,
+                            access_method=access_method,
+                            enabled=enabled_status
                         ))
                         logger.debug(f"User {username} has group write access via {group} to {fs_perm.path} on {hostname}")
                         break
@@ -393,6 +497,9 @@ class AccessAnalyzer:
             if not fs_perm:
                 return []
 
+            # Get domain info
+            domain_name = await self.get_domain_info(conn_info)
+
             # Get ACL information using vastool
             acl_groups = await self.get_vastool_acl_groups(conn_info, code_path)
 
@@ -403,11 +510,18 @@ class AccessAnalyzer:
                 group_members = await self.get_vastool_group_members(conn_info, group_name)
 
                 for member in group_members:
+                    # Check if domain user account is enabled
+                    is_enabled = await self.is_account_enabled(conn_info, member.username)
+                    enabled_status = "Y" if is_enabled else "N"
+                    access_method = f"{domain_name}({group_name})" if domain_name else f"domain({group_name})"
+                    
                     access_results.append(AccessResult(
                         user_id=member.username,
                         login_method=LoginMethod.DOMAIN,
                         privilege_type=PrivilegeType.GROUP,
-                        privilege_source=group_name
+                        privilege_source=group_name,
+                        access_method=access_method,
+                        enabled=enabled_status
                     ))
 
             # Also get local users with access

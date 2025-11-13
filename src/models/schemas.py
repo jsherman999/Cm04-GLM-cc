@@ -61,6 +61,8 @@ class AccessResult(BaseModel):
     login_method: LoginMethod = Field(..., description="How user can log in")
     privilege_type: PrivilegeType = Field(..., description="Type of privilege granting access")
     privilege_source: str = Field(..., description="Source of privilege (group name, owner, or sudo)")
+    access_method: str = Field(..., description="How user gets access (/etc/passwd or domain(group))")
+    enabled: str = Field(..., description="Y if account is enabled, N if locked/disabled")
 
 
 class HostScanResult(BaseModel):
