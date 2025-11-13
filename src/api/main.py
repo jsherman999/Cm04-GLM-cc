@@ -3,7 +3,7 @@ FastAPI main application for CM-04 Scanner
 Provides REST API endpoints for scanning and reporting
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, WebSocket, WebSocketDisconnect, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,16 +113,17 @@ async def submit_scan(
     try:
         job_id = str(uuid.uuid4())
 
-        # Submit scan job to background
+        # Submit scan job to background with SSH concurrency setting
         background_tasks.add_task(
             scanner.run_scan_job,
             job_id,
             request.hosts,
             request.job_name,
-            request.tags
+            request.tags,
+            request.ssh_concurrency or 10
         )
 
-        logger.info(f"Submitted scan job {job_id} with {len(request.hosts)} hosts")
+        logger.info(f"Submitted scan job {job_id} with {len(request.hosts)} hosts (ssh_concurrency={request.ssh_concurrency or 10})")
 
         return {
             "job_id": job_id,
@@ -135,11 +136,118 @@ async def submit_scan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/path-check")
+async def path_check(request: ScanRequest):
+    """
+    Check if hosts are reachable and paths exist
+    Returns only failures with status: unreachable, path_does_not_exist, or path_world_writable
+    """
+    try:
+        from ..core.ssh_engine import ssh_engine
+        
+        results = []
+        
+        for host_input in request.hosts:
+            hostname = host_input.hostname
+            
+            # Create SSH connection info
+            conn_info = SSHConnectionInfo(
+                hostname=hostname,
+                username=settings.ssh_user
+            )
+            
+            # Test SSH connection
+            try:
+                connection_ok = await ssh_engine.test_connection(conn_info)
+                if not connection_ok:
+                    # Host unreachable
+                    for path in host_input.code_paths:
+                        results.append({
+                            "hostname": hostname,
+                            "path": path,
+                            "result": "unreachable"
+                        })
+                    continue
+            except Exception as e:
+                logger.error(f"Connection test failed for {hostname}: {e}")
+                for path in host_input.code_paths:
+                    results.append({
+                        "hostname": hostname,
+                        "path": path,
+                        "result": "unreachable"
+                    })
+                continue
+            
+            # Check each path
+            for path in host_input.code_paths:
+                try:
+                    # Check if path exists and get permissions
+                    cmd = f"ls -ld '{path}' 2>/dev/null && stat -c '%a' '{path}' 2>/dev/null || ls -ld '{path}' 2>/dev/null | awk '{{print $1}}'"
+                    result = await ssh_engine.execute_command(conn_info, cmd)
+                    
+                    if result.exit_status != 0 or not result.stdout.strip():
+                        # Path does not exist
+                        results.append({
+                            "hostname": hostname,
+                            "path": path,
+                            "result": "path_does_not_exist"
+                        })
+                    else:
+                        # Check if world-writable
+                        output = result.stdout.strip()
+                        lines = output.split('\n')
+                        
+                        # Check permissions - look for 'w' in the 'other' position
+                        is_world_writable = False
+                        
+                        # Try to get octal permissions (from stat)
+                        if len(lines) > 1 and lines[-1].isdigit():
+                            perms = lines[-1]
+                            # Check last digit (other permissions)
+                            if len(perms) >= 3:
+                                other_perms = int(perms[-1])
+                                if other_perms & 2:  # Write bit for others
+                                    is_world_writable = True
+                        else:
+                            # Parse from ls -ld output (e.g., drwxrwxrwx)
+                            ls_output = lines[0]
+                            parts = ls_output.split()
+                            if len(parts) > 0:
+                                perms_str = parts[0]
+                                # Check position 8 (0-indexed) for 'w' in 'other' section
+                                if len(perms_str) >= 10 and perms_str[8] == 'w':
+                                    is_world_writable = True
+                        
+                        if is_world_writable:
+                            results.append({
+                                "hostname": hostname,
+                                "path": path,
+                                "result": "path_world_writable"
+                            })
+                        # If no issues, don't add to results (only failures returned)
+                        
+                except Exception as e:
+                    logger.error(f"Error checking path {path} on {hostname}: {e}")
+                    results.append({
+                        "hostname": hostname,
+                        "path": path,
+                        "result": "unreachable"
+                    })
+        
+        logger.info(f"Path check completed: {len(results)} failures found out of {sum(len(h.code_paths) for h in request.hosts)} paths")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error running path check: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/v1/scan/upload", response_model=Dict[str, str])
 async def submit_scan_from_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    job_name: Optional[str] = None
+    job_name: Optional[str] = Form(None),
+    ssh_concurrency: Optional[int] = Form(10)
 ):
     """Submit scan job from uploaded file"""
     try:
@@ -165,16 +273,17 @@ async def submit_scan_from_file(
 
         job_id = str(uuid.uuid4())
 
-        # Submit scan job
+        # Submit scan job with SSH concurrency setting
         background_tasks.add_task(
             scanner.run_scan_job,
             job_id,
             hosts,
             job_name or f"Upload: {file.filename}",
-            ["file_upload"]
+            ["file_upload"],
+            ssh_concurrency or 10
         )
 
-        logger.info(f"Submitted scan job {job_id} from uploaded file {file.filename}")
+        logger.info(f"Submitted scan job {job_id} from uploaded file {file.filename} (ssh_concurrency={ssh_concurrency or 10})")
 
         return {
             "job_id": job_id,

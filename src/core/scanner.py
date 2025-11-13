@@ -45,6 +45,7 @@ class JobState:
     is_archived: bool = False
     parent_job_id: Optional[str] = None
     run_number: Optional[str] = None
+    ssh_concurrency: int = 10
 
 
 class CM04Scanner:
@@ -86,7 +87,8 @@ class CM04Scanner:
         job_id: str,
         hosts: List[HostInput],
         job_name: Optional[str] = None,
-        tags: Optional[List[str]] = None
+        tags: Optional[List[str]] = None,
+        ssh_concurrency: int = 10
     ):
         """Run a scan job on the specified hosts"""
         try:
@@ -105,7 +107,8 @@ class CM04Scanner:
                 completed_hosts=0,
                 failed_hosts=0,
                 error_message=None,
-                tags=tags
+                tags=tags,
+                ssh_concurrency=ssh_concurrency
             )
 
             self.jobs[job_id] = job_state
@@ -137,8 +140,8 @@ class CM04Scanner:
 
     async def _process_hosts(self, job_state: JobState):
         """Process all hosts for a job"""
-        # Create batches for concurrent processing
-        batch_size = 10  # Process 10 hosts concurrently
+        # Create batches for concurrent processing using job's ssh_concurrency setting
+        batch_size = job_state.ssh_concurrency
         for i in range(0, len(job_state.hosts), batch_size):
             batch = job_state.hosts[i:i + batch_size]
 

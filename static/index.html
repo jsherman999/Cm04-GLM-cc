@@ -77,6 +77,17 @@
                             <label for="jobNameManual">Job Name (optional):</label>
                             <input type="text" id="jobNameManual" placeholder="Enter job name">
                         </div>
+                        
+                        <!-- SSH Concurrency Slider -->
+                        <div class="form-group">
+                            <label for="sshConcurrency">Concurrent SSH Sessions: <span id="sshConcurrencyValue">10</span></label>
+                            <input type="range" id="sshConcurrency" min="1" max="50" value="10" class="slider">
+                            <div class="slider-labels">
+                                <span>1</span>
+                                <span>50</span>
+                            </div>
+                        </div>
+                        
                         <div class="hosts-input">
                             <label>Hosts and Code Paths (one path per host):</label>
                             <div class="host-entries" id="hostEntries">
@@ -88,8 +99,35 @@
                             </div>
                             <button class="add-button" onclick="addHostEntry()">+ Add Host</button>
                         </div>
-                        <button class="scan-button" id="scanManualButton">Start Scan</button>
+                        
+                        <div class="action-buttons">
+                            <button class="path-check-button" id="pathCheckButton">Path Check</button>
+                            <button class="scan-button" id="scanManualButton">Start Scan</button>
+                        </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Path Check Results Section -->
+            <section class="path-check-section" id="pathCheckSection" style="display: none;">
+                <h2>Path Check Results</h2>
+                <div class="path-check-summary">
+                    <span id="pathCheckStatus">Checking paths...</span>
+                    <button class="export-csv-button" id="exportPathCheckButton">Export CSV</button>
+                </div>
+                <div class="path-check-table-container">
+                    <table class="path-check-table" id="pathCheckTable">
+                        <thead>
+                            <tr>
+                                <th>Hostname</th>
+                                <th>Path</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pathCheckTableBody">
+                            <!-- Results will be populated here -->
+                        </tbody>
+                    </table>
                 </div>
             </section>
 

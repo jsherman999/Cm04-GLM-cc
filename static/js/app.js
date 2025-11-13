@@ -37,6 +37,17 @@ class CM04Scanner {
         // Scan buttons
         document.getElementById('scanFromFileButton').addEventListener('click', () => this.scanFromFile());
         document.getElementById('scanManualButton').addEventListener('click', () => this.scanFromManual());
+        document.getElementById('pathCheckButton').addEventListener('click', () => this.runPathCheck());
+
+        // SSH Concurrency slider
+        const sshConcurrencySlider = document.getElementById('sshConcurrency');
+        const sshConcurrencyValue = document.getElementById('sshConcurrencyValue');
+        sshConcurrencySlider.addEventListener('input', (e) => {
+            sshConcurrencyValue.textContent = e.target.value;
+        });
+
+        // Path check export button
+        document.getElementById('exportPathCheckButton').addEventListener('click', () => this.exportPathCheckResults());
 
         // Add first host entry for manual mode
         this.addHostEntry();
@@ -128,6 +139,7 @@ class CM04Scanner {
         }
 
         const jobName = document.getElementById('jobName').value;
+        const sshConcurrency = parseInt(document.getElementById('sshConcurrency').value);
 
         try {
             this.showLoading('Uploading files and starting scan...');
@@ -137,6 +149,7 @@ class CM04Scanner {
             if (jobName) {
                 formData.append('job_name', jobName);
             }
+            formData.append('ssh_concurrency', sshConcurrency);
 
             const response = await fetch('/api/v1/scan/upload', {
                 method: 'POST',
@@ -201,7 +214,8 @@ class CM04Scanner {
                 },
                 body: JSON.stringify({
                     hosts: hosts,
-                    job_name: jobName
+                    job_name: jobName,
+                    ssh_concurrency: parseInt(document.getElementById('sshConcurrency').value)
                 })
             });
 
@@ -221,6 +235,146 @@ class CM04Scanner {
             this.showError(`Failed to start scan: ${error.message}`);
             this.addDebugLog('error', `Manual scan submission failed: ${error.message}`);
         }
+    }
+
+    async runPathCheck() {
+        const hostEntries = document.querySelectorAll('.host-entry');
+        const hosts = [];
+
+        hostEntries.forEach(entry => {
+            const hostname = entry.querySelector('.hostname-input').value.trim();
+            const path = entry.querySelector('.paths-input').value.trim();
+
+            if (hostname && path) {
+                hosts.push({ hostname, code_paths: [path] });
+            }
+        });
+
+        if (hosts.length === 0) {
+            this.showError('Please add at least one host with a code path');
+            return;
+        }
+
+        try {
+            this.showLoading('Running path check...');
+            
+            const response = await fetch('/api/v1/path-check', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ hosts })
+            });
+
+            const results = await response.json();
+
+            if (!response.ok) {
+                throw new Error(results.detail || 'Path check failed');
+            }
+
+            this.hideLoading();
+            this.displayPathCheckResults(results);
+            this.addDebugLog('info', `Path check completed: ${results.length} results`);
+
+        } catch (error) {
+            this.hideLoading();
+            this.showError(`Path check failed: ${error.message}`);
+            this.addDebugLog('error', `Path check failed: ${error.message}`);
+        }
+    }
+
+    displayPathCheckResults(results) {
+        // Filter to show only failures
+        const failures = results.filter(r => r.result !== 'ok');
+
+        // Show path check section
+        document.getElementById('pathCheckSection').style.display = 'block';
+        
+        // Scroll to results
+        document.getElementById('pathCheckSection').scrollIntoView({ behavior: 'smooth' });
+
+        // Update status
+        const statusText = failures.length === 0 
+            ? 'All paths are reachable and valid!'
+            : `Found ${failures.length} issue(s)`;
+        document.getElementById('pathCheckStatus').textContent = statusText;
+
+        // Populate table
+        const tbody = document.getElementById('pathCheckTableBody');
+        tbody.innerHTML = '';
+
+        if (failures.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#28a745; padding:2rem;">✓ All hosts reachable and paths valid</td></tr>';
+            return;
+        }
+
+        failures.forEach(failure => {
+            const row = document.createElement('tr');
+            
+            // Determine row class based on result
+            if (failure.result === 'unreachable') {
+                row.className = 'path-check-row-unreachable';
+            } else if (failure.result === 'path_does_not_exist') {
+                row.className = 'path-check-row-path-not-found';
+            } else if (failure.result === 'path_world_writable') {
+                row.className = 'path-check-row-world-writable';
+            }
+
+            row.innerHTML = `
+                <td class="hostname-cell">${this.escapeHtml(failure.hostname)}</td>
+                <td class="path-cell">${this.escapeHtml(failure.path)}</td>
+                <td class="result-cell result-${failure.result.replace(/_/g, '-')}">${this.formatResult(failure.result)}</td>
+            `;
+            
+            tbody.appendChild(row);
+        });
+
+        // Store results for export
+        this.pathCheckResults = failures;
+    }
+
+    formatResult(result) {
+        const resultMap = {
+            'unreachable': 'Host Unreachable',
+            'path_does_not_exist': 'Path Does Not Exist',
+            'path_world_writable': 'Path World-Writable'
+        };
+        return resultMap[result] || result;
+    }
+
+    exportPathCheckResults() {
+        if (!this.pathCheckResults || this.pathCheckResults.length === 0) {
+            this.showError('No path check results to export');
+            return;
+        }
+
+        // Create CSV content
+        const headers = ['Hostname', 'Path', 'Result'];
+        const rows = this.pathCheckResults.map(r => [
+            r.hostname,
+            r.path,
+            this.formatResult(r.result)
+        ]);
+
+        let csvContent = headers.join(',') + '\n';
+        rows.forEach(row => {
+            csvContent += row.map(cell => `"${cell}"`).join(',') + '\n';
+        });
+
+        // Create download link
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', `path_check_failures_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        this.addDebugLog('info', 'Path check results exported to CSV');
     }
 
     startJobMonitoring(jobId) {
@@ -849,6 +1003,12 @@ class CM04Scanner {
     closeDifferences() {
         document.getElementById('differencesSection').style.display = 'none';
         this.currentComparison = null;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 }
 

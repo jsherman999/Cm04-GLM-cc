@@ -53,6 +53,7 @@ class ScanRequest(BaseModel):
     hosts: List[HostInput] = Field(..., description="List of hosts to scan")
     job_name: Optional[str] = Field(None, description="Optional job name")
     tags: Optional[List[str]] = Field(None, description="Optional job tags")
+    ssh_concurrency: Optional[int] = Field(10, ge=1, le=50, description="Number of concurrent SSH sessions (1-50)")
 
 
 class AccessResult(BaseModel):
