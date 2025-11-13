@@ -170,25 +170,24 @@ class CM04Scanner {
 
         hostEntries.forEach(entry => {
             const hostname = entry.querySelector('.hostname-input').value.trim();
-            const paths = entry.querySelector('.paths-input').value.trim();
+            const path = entry.querySelector('.paths-input').value.trim();
 
-            if (hostname && paths) {
-                const codePaths = paths.split(',').map(p => p.trim()).filter(p => p);
-                if (codePaths.length > 0) {
-                    hosts.push({ hostname, code_paths: codePaths });
-                } else {
-                    hasError = true;
-                }
+            if (hostname && path) {
+                // Only one path per host - no comma splitting
+                hosts.push({ hostname, code_paths: [path] });
+            } else if (hostname || path) {
+                // If one is filled but not the other, that's an error
+                hasError = true;
             }
         });
 
         if (hosts.length === 0) {
-            this.showError('Please add at least one host with code paths');
+            this.showError('Please add at least one host with a code path');
             return;
         }
 
         if (hasError) {
-            this.showError('Please provide valid code paths for all hosts');
+            this.showError('Please provide both hostname and path for all entries');
             return;
         }
 
@@ -535,7 +534,7 @@ class CM04Scanner {
         entry.className = 'host-entry';
         entry.innerHTML = `
             <input type="text" placeholder="Hostname" class="hostname-input">
-            <input type="text" placeholder="Code paths (comma-separated)" class="paths-input">
+            <input type="text" placeholder="Code path (e.g., /home/user)" class="paths-input">
             <button class="remove-button" onclick="this.parentElement.remove()">×</button>
         `;
         hostEntries.appendChild(entry);

@@ -104,10 +104,13 @@ SECRET_KEY=your-random-secret-key
 
 ### Host File Formats
 
+**Important:** Each host entry should specify ONE code path. To scan multiple paths on the same host, create separate entries.
+
 #### CSV Format
 ```csv
-server1.example.com,/home,/var/log,/opt/app
-server2.example.com,/data,/etc
+server1.example.com,/home
+server1.example.com,/var/log
+server2.example.com,/data
 server3.example.com,/usr/local/bin
 ```
 
@@ -116,19 +119,24 @@ server3.example.com,/usr/local/bin
 [
   {
     "hostname": "server1.example.com",
-    "code_paths": ["/home", "/var/log", "/opt/app"]
+    "code_paths": ["/home"]
+  },
+  {
+    "hostname": "server1.example.com",
+    "code_paths": ["/var/log"]
   },
   {
     "hostname": "server2.example.com",
-    "code_paths": ["/data", "/etc"]
+    "code_paths": ["/data"]
   }
 ]
 ```
 
 #### Plain Text Format
 ```
-server1.example.com /home /var/log /opt/app
-server2.example.com /data /etc
+server1.example.com /home
+server1.example.com /var/log
+server2.example.com /data
 server3.example.com /usr/local/bin
 ```
 
@@ -246,11 +254,16 @@ The web interface includes a debug console that shows:
 
 ### Log Files
 
+Log files are automatically created in the `./logs` directory when the server starts:
+
 - `logs/cm04_scanner.log` - General application logs
+- `logs/cm04_scanner_errors.log` - Error-level logs only
 - `logs/ssh_operations.log` - SSH connection and command logs
 - `logs/access_analysis.log` - Permission analysis details
 - `logs/api_requests.log` - API request/response logs
 - `logs/audit.log` - Security audit events
+
+**Note:** The `logs/` directory is created automatically on first run. Log files use rotation (max 10-100MB per file) to prevent disk space issues.
 
 ### Health Check
 

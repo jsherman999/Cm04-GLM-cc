@@ -178,15 +178,27 @@ class CM04Scanner:
                 username=settings.ssh_user
             )
 
-            # Test connection
-            if not await ssh_engine.test_connection(conn_info):
-                logger.error(f"Cannot connect to host {hostname}")
+            # Test connection with detailed error handling
+            connection_success = False
+            connection_error = None
+            
+            try:
+                connection_success = await ssh_engine.test_connection(conn_info)
+                if not connection_success:
+                    connection_error = "SSH connection test returned False"
+            except Exception as conn_err:
+                connection_error = f"SSH connection exception: {str(conn_err)}"
+                logger.error(f"Connection error for {hostname}: {connection_error}", exc_info=True)
+            
+            if not connection_success:
+                error_msg = connection_error or f"Cannot connect to {hostname}"
+                logger.error(f"SSH connection failed to {hostname}: {error_msg}")
                 return HostScanResult(
                     hostname=hostname,
                     code_path="",  # No specific path
                     users_with_access=[],
                     scan_timestamp=datetime.utcnow(),
-                    error_message=f"SSH connection failed to {hostname}"
+                    error_message=error_msg
                 )
 
             # Process each code path for this host
@@ -195,15 +207,17 @@ class CM04Scanner:
 
             for code_path in host_input.code_paths:
                 try:
+                    logger.info(f"Analyzing path {code_path} on {hostname}")
                     # Analyze access using vastool for AD integration
                     access_results = await access_analyzer.analyze_path_via_vastool(
                         conn_info, code_path
                     )
                     all_access_results.extend(access_results)
+                    logger.info(f"Found {len(access_results)} users with access to {code_path} on {hostname}")
 
                 except Exception as e:
                     error_msg = f"Error analyzing path {code_path}: {str(e)}"
-                    logger.error(f"{error_msg} on {hostname}")
+                    logger.error(f"{error_msg} on {hostname}", exc_info=True)
                     host_errors.append(error_msg)
 
             # Create host scan result
@@ -218,13 +232,14 @@ class CM04Scanner:
             )
 
         except Exception as e:
-            logger.error(f"Error processing host {hostname}: {e}")
+            error_msg = f"Unexpected error processing host {hostname}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
             return HostScanResult(
                 hostname=hostname,
                 code_path="",
                 users_with_access=[],
                 scan_timestamp=datetime.utcnow(),
-                error_message=str(e)
+                error_message=error_msg
             )
 
     def get_job_result(self, job_id: str) -> Optional[JobResult]:
