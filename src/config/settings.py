@@ -3,7 +3,8 @@ Configuration settings for CM-04 Scanner application
 """
 
 from typing import List, Optional
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from pathlib import Path
 
 
@@ -47,9 +48,10 @@ class Settings(BaseSettings):
     # QAS/VAS settings
     vastool_path: str = Field(default="/opt/quest/bin/vastool", env="VASTOOL_PATH")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8"
+    }
 
 
 # Global settings instance

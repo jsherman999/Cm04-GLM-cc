@@ -382,6 +382,27 @@ async def general_exception_handler(request, exc):
     )
 
 
+def start_server():
+    """Entry point for cm04-server CLI command"""
+    import click
+    import uvicorn
+    
+    @click.command()
+    @click.option('--host', default='0.0.0.0', help='Host to bind to')
+    @click.option('--port', default=8000, type=int, help='Port to bind to')
+    @click.option('--reload', is_flag=True, help='Enable auto-reload')
+    def cli(host, port, reload):
+        """Start CM-04 Scanner API server"""
+        uvicorn.run(
+            "src.api.main:app",
+            host=host,
+            port=port,
+            reload=reload
+        )
+    
+    cli()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

@@ -87,7 +87,7 @@ Repository = "https://github.com/your-org/cm04-scanner.git"
 [project.scripts]
 cm04-scan = "src.cli.cm04_scan:cli"
 cm04-monitor = "src.cli.cm04_monitor:cli"
-cm04-server = "src.api.main:app"
+cm04-server = "src.api.main:start_server"
 
 [tool.setuptools.packages.find]
 where = ["."]
