@@ -75,25 +75,42 @@ class AccessAnalyzer:
             return self.permission_cache[cache_key]
 
         try:
-            # Use stat command to get detailed file information
-            stat_cmd = f"stat -c '%U %G %a %F' '{path}' 2>/dev/null || echo 'ERROR: Path not found'"
-            result = await ssh_engine.execute_command(conn_info, stat_cmd)
+            # Use ls -ld for maximum portability across Unix/Linux/AIX
+            # This works consistently across all platforms
+            ls_cmd = f"ls -ldn '{path}' 2>/dev/null"
+            result = await ssh_engine.execute_command(conn_info, ls_cmd)
 
-            if result.exit_status != 0 or result.stdout.startswith("ERROR"):
+            if result.exit_status != 0:
                 logger.warning(f"Path {path} not found on {conn_info.hostname}")
                 return None
 
-            # Parse stat output: owner group permissions type
+            # Parse ls -ld output: permissions links owner group size date time name
+            # Example: drwxr-xr-x 7 210884 111 4096 Jun  3 10:14 /home/jsherma2/
             parts = result.stdout.split()
-            if len(parts) < 4:
-                logger.error(f"Unexpected stat output for {path} on {conn_info.hostname}: {result.stdout}")
+            if len(parts) < 3:
+                logger.error(f"Unexpected ls output for {path} on {conn_info.hostname}: {result.stdout}")
                 return None
 
-            owner, group, octal_perm, file_type = parts[:4]
-            is_directory = "directory" in file_type.lower()
+            permissions_str = parts[0]  # e.g., drwxr-xr-x
+            owner_uid = parts[2]  # numeric UID
+            group_gid = parts[3]  # numeric GID
+            
+            # Determine if it's a directory
+            is_directory = permissions_str.startswith('d')
+            
+            # Get the actual username and group name from UID/GID
+            # Try to resolve UID to username
+            id_cmd = f"id -un {owner_uid} 2>/dev/null || echo '{owner_uid}'"
+            id_result = await ssh_engine.execute_command(conn_info, id_cmd)
+            owner = id_result.stdout.strip()
+            
+            # Try to resolve GID to groupname (try getent first, fall back to /etc/group)
+            grp_cmd = f"getent group {group_gid} 2>/dev/null | cut -d: -f1 || grep '^[^:]*:[^:]*:{group_gid}:' /etc/group 2>/dev/null | cut -d: -f1 || echo '{group_gid}'"
+            grp_result = await ssh_engine.execute_command(conn_info, grp_cmd)
+            group = grp_result.stdout.strip()
 
-            # Convert octal to rwx format
-            rwx_perm = self._octal_to_rwx(octal_perm)
+            # Convert permissions string to rwx format (skip first char which is file type)
+            rwx_perm = permissions_str[1:] if len(permissions_str) > 1 else "---------"
 
             fs_perm = FileSystemPermission(
                 path=path,
@@ -114,15 +131,21 @@ class AccessAnalyzer:
         """Get list of users who can log into the system"""
         try:
             # Get users with valid shells (can log in)
+            # Use POSIX-compliant shell syntax for AIX compatibility
             cmd = """
-            getent passwd | while IFS=: read -r user _ uid gid gecos home shell; do
-                # Check if user has a valid login shell
-                if [[ "$shell" == */bash* || "$shell" == */sh* || "$shell" == */zsh* || "$shell" == */ksh* ]]; then
-                    # Check if home directory exists
-                    if [[ -d "$home" ]]; then
-                        echo "$user"
-                    fi
-                fi
+            getent passwd 2>/dev/null || cat /etc/passwd | while IFS=: read user x uid gid gecos home shell; do
+                # Check if shell is not empty and not a nologin/false shell
+                case "$shell" in
+                    *bash|*sh|*ksh|*zsh|*csh|*tcsh)
+                        # Check if home directory exists
+                        if [ -d "$home" ]; then
+                            echo "$user"
+                        fi
+                        ;;
+                    *)
+                        # Skip users with nologin, false, or empty shells
+                        ;;
+                esac
             done | sort -u
             """
 
