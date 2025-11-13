@@ -76,23 +76,15 @@ class AccessAnalyzer:
 
         try:
             # Use ls -ld for maximum portability across Unix/Linux/AIX
-            # Combine all commands in one execution to avoid event loop issues
+            # Get both numeric and named versions to ensure we get the data
             combined_cmd = f"""
-            # Get file info
-            LS_OUTPUT=$(ls -ldn '{path}' 2>/dev/null) || exit 1
+            # Get file info with names (ls -ld) and numeric (ls -ldn)
+            LS_OUTPUT=$(ls -ld '{path}' 2>/dev/null) || exit 1
             echo "$LS_OUTPUT"
             
-            # Extract UID and GID from ls output
-            OWNER_UID=$(echo "$LS_OUTPUT" | awk '{{print $3}}')
-            GROUP_GID=$(echo "$LS_OUTPUT" | awk '{{print $4}}')
-            
-            # Resolve UID to username
-            echo "---OWNER---"
-            id -un $OWNER_UID 2>/dev/null || echo "$OWNER_UID"
-            
-            # Resolve GID to groupname
-            echo "---GROUP---"
-            getent group $GROUP_GID 2>/dev/null | cut -d: -f1 || grep "^[^:]*:[^:]*:$GROUP_GID:" /etc/group 2>/dev/null | cut -d: -f1 || echo "$GROUP_GID"
+            # Also get numeric version for backup
+            echo "---NUMERIC---"
+            ls -ldn '{path}' 2>/dev/null || echo "FAILED"
             """
             
             result = await ssh_engine.execute_command(conn_info, combined_cmd)
@@ -106,11 +98,11 @@ class AccessAnalyzer:
             
             logger.debug(f"Command output for {path} on {conn_info.hostname}: {output_lines}")
             
-            if len(output_lines) < 4:
-                logger.error(f"Unexpected command output for {path} on {conn_info.hostname}. Got {len(output_lines)} lines: {output_lines}")
+            if len(output_lines) < 1:
+                logger.error(f"Empty command output for {path} on {conn_info.hostname}")
                 return None
             
-            # First line is ls output
+            # First line is ls -ld output with names
             ls_output = output_lines[0]
             parts = ls_output.split()
             if len(parts) < 4:
@@ -118,20 +110,15 @@ class AccessAnalyzer:
                 return None
 
             permissions_str = parts[0]  # e.g., drwxr-xr-x
+            owner = parts[2]  # Owner name or UID
+            group = parts[3]  # Group name or GID
             
-            # Find owner and group in output (after markers)
-            owner = None
-            group = None
-            for i, line in enumerate(output_lines):
-                if line == "---OWNER---" and i + 1 < len(output_lines):
-                    owner = output_lines[i + 1]
-                    logger.debug(f"Found owner: {owner}")
-                elif line == "---GROUP---" and i + 1 < len(output_lines):
-                    group = output_lines[i + 1]
-                    logger.debug(f"Found group: {group}")
+            logger.debug(f"Parsed from ls -ld: owner={owner}, group={group}, permissions={permissions_str}")
             
+            # If we got numeric IDs instead of names, that's still valid
+            # The scanner will handle numeric IDs appropriately
             if not owner or not group:
-                logger.error(f"Failed to parse owner/group for {path} on {conn_info.hostname}. Owner={owner}, Group={group}. Output lines: {output_lines}")
+                logger.error(f"Failed to parse owner/group for {path} on {conn_info.hostname}. Output: {ls_output}")
                 return None
             
             # Determine if it's a directory
