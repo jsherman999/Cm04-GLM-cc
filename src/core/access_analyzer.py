@@ -203,12 +203,31 @@ class AccessAnalyzer:
                 logger.error(f"Could not get permissions for {code_path} on {hostname}")
                 return []
 
-            # Get all users who can log into the system
-            login_users = await self.get_login_users(conn_info)
-
-            # Check access for each user
             access_results = []
+
+            # Check owner write access
+            if self._check_owner_write_permission(fs_perm.permissions):
+                owner_result = await self.check_user_path_access(conn_info, fs_perm.owner, fs_perm)
+                if owner_result:
+                    access_results.extend(owner_result)
+
+            # Check group write access - enumerate group members directly
+            if self._check_group_write_permission(fs_perm.permissions):
+                group_members = await self.get_group_members(conn_info, fs_perm.group)
+                logger.info(f"Found {len(group_members)} members in group {fs_perm.group} on {hostname}")
+                
+                for member in group_members:
+                    member_result = await self.check_user_path_access(conn_info, member, fs_perm)
+                    if member_result:
+                        access_results.extend(member_result)
+
+            # Also check all local login users for sudo access
+            login_users = await self.get_login_users(conn_info)
             for user in login_users:
+                # Skip if we already checked this user (as owner or group member)
+                if any(r.user_id == user for r in access_results):
+                    continue
+                
                 user_access = await self.check_user_path_access(conn_info, user, fs_perm)
                 if user_access:
                     access_results.extend(user_access)
@@ -353,6 +372,38 @@ class AccessAnalyzer:
 
         except Exception as e:
             logger.error(f"Error getting login users on {conn_info.hostname}: {e}")
+            return []
+
+    async def get_group_members(self, conn_info: SSHConnectionInfo, group_name: str) -> List[str]:
+        """Get members of a group (works for both local and domain groups)"""
+        try:
+            # Use getent which works for both local and domain groups on joined systems
+            cmd = f"getent group {group_name} 2>/dev/null || grep '^{group_name}:' /etc/group 2>/dev/null"
+            result = await ssh_engine.execute_command(conn_info, cmd)
+
+            if result.exit_status != 0 or not result.stdout.strip():
+                logger.warning(f"Group {group_name} not found on {conn_info.hostname}")
+                return []
+
+            # Parse group entry: groupname:x:gid:member1,member2,member3
+            group_line = result.stdout.strip()
+            parts = group_line.split(':')
+            
+            if len(parts) < 4:
+                logger.warning(f"Unexpected group format for {group_name} on {conn_info.hostname}: {group_line}")
+                return []
+
+            members_str = parts[3].strip()
+            if not members_str:
+                logger.debug(f"Group {group_name} has no members listed on {conn_info.hostname}")
+                return []
+
+            members = [m.strip() for m in members_str.split(',') if m.strip()]
+            logger.debug(f"Found {len(members)} members in group {group_name} on {conn_info.hostname}: {members}")
+            return members
+
+        except Exception as e:
+            logger.error(f"Error getting members of group {group_name} on {conn_info.hostname}: {e}")
             return []
 
     async def check_user_path_access(self, conn_info: SSHConnectionInfo, username: str, fs_perm: FileSystemPermission) -> List[AccessResult]:
