@@ -102,9 +102,12 @@ class AccessAnalyzer:
                 return None
 
             # Parse the output
-            output_lines = result.stdout.strip().split('\n')
+            output_lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            
+            logger.debug(f"Command output for {path} on {conn_info.hostname}: {output_lines}")
+            
             if len(output_lines) < 4:
-                logger.error(f"Unexpected command output for {path} on {conn_info.hostname}: {result.stdout}")
+                logger.error(f"Unexpected command output for {path} on {conn_info.hostname}. Got {len(output_lines)} lines: {output_lines}")
                 return None
             
             # First line is ls output
@@ -121,12 +124,14 @@ class AccessAnalyzer:
             group = None
             for i, line in enumerate(output_lines):
                 if line == "---OWNER---" and i + 1 < len(output_lines):
-                    owner = output_lines[i + 1].strip()
+                    owner = output_lines[i + 1]
+                    logger.debug(f"Found owner: {owner}")
                 elif line == "---GROUP---" and i + 1 < len(output_lines):
-                    group = output_lines[i + 1].strip()
+                    group = output_lines[i + 1]
+                    logger.debug(f"Found group: {group}")
             
             if not owner or not group:
-                logger.error(f"Failed to parse owner/group for {path} on {conn_info.hostname}")
+                logger.error(f"Failed to parse owner/group for {path} on {conn_info.hostname}. Owner={owner}, Group={group}. Output lines: {output_lines}")
                 return None
             
             # Determine if it's a directory
