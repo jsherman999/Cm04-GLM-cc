@@ -147,6 +147,47 @@ class AccessAnalyzer:
             logger.error(f"Error getting domain info for {conn_info.hostname}: {e}")
             return None
 
+    async def get_login_access_group(self, conn_info: SSHConnectionInfo, username: str) -> Optional[str]:
+        """
+        Get the domain group that allows login access for a domain user
+        Uses vastool user checkaccess to determine the allowed group
+        """
+        try:
+            # Check if vastool is available
+            cmd = f"/opt/quest/bin/vastool user checkaccess {username} 2>/dev/null || echo 'NO_VASTOOL'"
+            result = await ssh_engine.execute_command(conn_info, cmd)
+            
+            if result.exit_status != 0 or 'NO_VASTOOL' in result.stdout:
+                logger.debug(f"vastool not available or user {username} not found on {conn_info.hostname}")
+                return None
+            
+            # Parse output to find the allowed group
+            # Example: "Access Rule = [Allow Group - MS\unx_ep_compliance_usa    (users.allow)]"
+            output = result.stdout
+            
+            # Look for "Allow Group" in the output
+            for line in output.split('\n'):
+                if 'Allow Group' in line and 'Access Rule' in line:
+                    # Extract the group name between "Allow Group - " and the next whitespace/parenthesis
+                    # Example: "MS\unx_ep_compliance_usa"
+                    match = re.search(r'Allow Group\s*-\s*([^\s\(]+)', line)
+                    if match:
+                        group = match.group(1).strip()
+                        logger.debug(f"Login access group for {username} on {conn_info.hostname}: {group}")
+                        return group
+            
+            # If ALLOWED but no specific group found, user might have direct access
+            if 'ALLOWED' in output:
+                logger.debug(f"User {username} has login access on {conn_info.hostname} but no specific group found")
+                return "direct_access"
+            
+            logger.debug(f"No login access group found for {username} on {conn_info.hostname}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting login access group for {username} on {conn_info.hostname}: {e}")
+            return None
+
     async def analyze_path_access(self, conn_info: SSHConnectionInfo, code_path: str) -> List[AccessResult]:
         """
         Analyze who can write to a given code path on a remote host
@@ -326,15 +367,25 @@ class AccessAnalyzer:
             login_method = LoginMethod.LOCAL if is_local else LoginMethod.DOMAIN
             enabled_status = "Y" if is_enabled else "N"
             
-            # Get domain info if not local
+            # Get domain info and login access group if not local
             domain_name = None
+            login_access_group = None
             if not is_local:
                 domain_name = await self.get_domain_info(conn_info)
+                login_access_group = await self.get_login_access_group(conn_info, username)
             
             # Check if user is owner
             if fs_perm.owner == username:
                 if self._check_owner_write_permission(fs_perm.permissions):
-                    access_method = "/etc/passwd" if is_local else (f"{domain_name}(owner)" if domain_name else "domain(owner)")
+                    # Access method shows how user logs in, not the privilege source
+                    if is_local:
+                        access_method = "/etc/passwd"
+                    else:
+                        if login_access_group:
+                            access_method = f"{domain_name}({login_access_group})" if domain_name else f"domain({login_access_group})"
+                        else:
+                            access_method = domain_name or "domain"
+                    
                     access_results.append(AccessResult(
                         user_id=username,
                         login_method=login_method,
@@ -353,7 +404,15 @@ class AccessAnalyzer:
 
             # Check sudo access
             if user_caps.has_sudo:
-                access_method = "/etc/passwd" if is_local else (f"{domain_name}(sudo)" if domain_name else "domain(sudo)")
+                # Access method shows how user logs in, not the privilege source
+                if is_local:
+                    access_method = "/etc/passwd"
+                else:
+                    if login_access_group:
+                        access_method = f"{domain_name}({login_access_group})" if domain_name else f"domain({login_access_group})"
+                    else:
+                        access_method = domain_name or "domain"
+                
                 access_results.append(AccessResult(
                     user_id=username,
                     login_method=login_method,
@@ -369,7 +428,15 @@ class AccessAnalyzer:
             for group in user_groups:
                 if group == fs_perm.group:
                     if self._check_group_write_permission(fs_perm.permissions):
-                        access_method = "/etc/passwd" if is_local else (f"{domain_name}({group})" if domain_name else f"domain({group})")
+                        # Access method shows how user logs in, not the privilege source
+                        if is_local:
+                            access_method = "/etc/passwd"
+                        else:
+                            if login_access_group:
+                                access_method = f"{domain_name}({login_access_group})" if domain_name else f"domain({login_access_group})"
+                            else:
+                                access_method = domain_name or "domain"
+                        
                         access_results.append(AccessResult(
                             user_id=username,
                             login_method=login_method,
@@ -513,14 +580,20 @@ class AccessAnalyzer:
                     # Check if domain user account is enabled
                     is_enabled = await self.is_account_enabled(conn_info, member.username)
                     enabled_status = "Y" if is_enabled else "N"
-                    access_method = f"{domain_name}({group_name})" if domain_name else f"domain({group_name})"
+                    
+                    # Get the login access group (the group that allows login)
+                    login_access_group = await self.get_login_access_group(conn_info, member.username)
+                    if login_access_group:
+                        access_method = f"{domain_name}({login_access_group})" if domain_name else f"domain({login_access_group})"
+                    else:
+                        access_method = domain_name or "domain"
                     
                     access_results.append(AccessResult(
                         user_id=member.username,
                         login_method=LoginMethod.DOMAIN,
                         privilege_type=PrivilegeType.GROUP,
-                        privilege_source=group_name,
-                        access_method=access_method,
+                        privilege_source=group_name,  # This is the group granting WRITE access
+                        access_method=access_method,  # This is the group allowing LOGIN access
                         enabled=enabled_status
                     ))
 
