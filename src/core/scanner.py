@@ -160,7 +160,11 @@ class CM04Scanner:
                     job_state.failed_hosts += 1
                 elif result:
                     job_state.results.append(result)
-                    job_state.completed_hosts += 1
+                    # Check if the result has an error_message indicating SSH connection failure
+                    if result.error_message and ("Cannot connect" in result.error_message or "SSH connection" in result.error_message):
+                        job_state.failed_hosts += 1
+                    else:
+                        job_state.completed_hosts += 1
                 else:
                     job_state.failed_hosts += 1
 

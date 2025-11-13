@@ -363,9 +363,15 @@ class AccessAnalyzer:
         try:
             # Determine login method and access method
             is_local = await self.is_user_local(conn_info, username)
-            is_enabled = await self.is_account_enabled(conn_info, username)
             login_method = LoginMethod.LOCAL if is_local else LoginMethod.DOMAIN
-            enabled_status = "Y" if is_enabled else "N"
+            
+            # For enabled status: domain users are always "Y", local users need checking
+            if is_local:
+                is_enabled = await self.is_account_enabled(conn_info, username)
+                enabled_status = "Y" if is_enabled else "N"
+            else:
+                # Domain users are always considered enabled (we can't check AD status from host)
+                enabled_status = "Y"
             
             # Get domain info and login access group if not local
             domain_name = None
