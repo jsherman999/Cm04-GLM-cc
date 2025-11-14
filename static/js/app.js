@@ -454,8 +454,8 @@ class CM04Scanner {
 
         if (current_host) {
             document.getElementById('currentHost').textContent = `Scanning: ${current_host}`;
-            // Log progress update
-            this.addDebugLog('info', `Processing host ${completed_hosts + 1}/${total_hosts}: ${current_host}`);
+            // Log progress update as verbose
+            this.addDebugLog('info', `Processing host ${completed_hosts + 1}/${total_hosts}: ${current_host}`, true);
         }
 
         // Update summary cards if results section is visible

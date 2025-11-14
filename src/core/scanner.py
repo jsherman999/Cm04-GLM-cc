@@ -195,7 +195,7 @@ class CM04Scanner:
                 
                 # Send progress update after each host completes
                 current_host = batch[j].hostname if j < len(batch) else None
-                await self.websocket_manager.send_progress(
+                await self.websocket_manager.broadcast_job_progress(
                     job_state.job_id,
                     {
                         "current_host": current_host,
