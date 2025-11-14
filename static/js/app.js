@@ -902,7 +902,7 @@ class CM04Scanner {
                             ? `<button class="audit-action-btn" onclick="rerunAudit('${audit.job_id}')">Rerun</button>`
                             : audit.status === 'running'
                             ? `<button class="audit-action-btn" onclick="viewRunningAudit('${audit.job_id}')">View</button>
-                               <button class="audit-action-btn stop" onclick="scanner.stopAuditFromHistory('${audit.job_id}')">Stop</button>`
+                               <button class="audit-action-btn stop" onclick="stopAuditFromHistory('${audit.job_id}')">Stop</button>`
                             : ''
                         }
                         ${audit.status === 'completed' || audit.status === 'failed'
@@ -1183,6 +1183,18 @@ function clearDebugLogs() {
 
 function toggleDebugConsole() {
     window.cm04Scanner.toggleDebugConsole();
+}
+
+function toggleVerboseMode() {
+    window.cm04Scanner.toggleVerboseMode();
+}
+
+function stopScan() {
+    window.cm04Scanner.stopScan();
+}
+
+function stopAuditFromHistory(jobId) {
+    window.cm04Scanner.stopAuditFromHistory(jobId);
 }
 
 function closeErrorModal() {

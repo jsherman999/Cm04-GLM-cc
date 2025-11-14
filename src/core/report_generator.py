@@ -100,6 +100,11 @@ class ReportGenerator:
             users_count = len(host_result.users_with_access)
             total_users_with_access += users_count
 
+            # Count by privilege type for this host
+            owner_count = 0
+            group_count = 0
+            sudo_count = 0
+
             # Count by privilege type
             for access in host_result.users_with_access:
                 priv_type = access.privilege_type.value
@@ -108,11 +113,22 @@ class ReportGenerator:
                 access_by_privilege_type[priv_type] = access_by_privilege_type.get(priv_type, 0) + 1
                 access_by_login_method[login_method] = access_by_login_method.get(login_method, 0) + 1
 
+                # Count for this host
+                if priv_type == 'owner':
+                    owner_count += 1
+                elif priv_type == 'group':
+                    group_count += 1
+                elif priv_type == 'sudo':
+                    sudo_count += 1
+
             # Host summary
             host_access_summary.append({
                 "hostname": host_result.hostname,
                 "code_path": host_result.code_path,
                 "users_with_access": users_count,
+                "owner_access": owner_count,
+                "group_access": group_count,
+                "sudo_access": sudo_count,
                 "has_error": host_result.error_message is not None
             })
 
@@ -374,9 +390,9 @@ class ReportGenerator:
                     <td>{host_summary["hostname"]}</td>
                     <td>{host_summary["code_path"]}</td>
                     <td>{host_summary["users_with_access"]}</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>-</td>
+                    <td>{host_summary["owner_access"]}</td>
+                    <td>{host_summary["group_access"]}</td>
+                    <td>{host_summary["sudo_access"]}</td>
                     <td>{'ERROR' if host_summary['has_error'] else 'OK'}</td>
                 </tr>
                 """

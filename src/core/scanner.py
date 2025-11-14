@@ -192,6 +192,18 @@ class CM04Scanner:
                     job_state.failed_hosts += 1
 
                 job_state.current_host_index += 1
+                
+                # Send progress update after each host completes
+                current_host = batch[j].hostname if j < len(batch) else None
+                await self.websocket_manager.send_progress(
+                    job_state.job_id,
+                    {
+                        "current_host": current_host,
+                        "completed_hosts": job_state.completed_hosts,
+                        "total_hosts": len(job_state.hosts),
+                        "failed_hosts": job_state.failed_hosts
+                    }
+                )
 
             # Small delay between batches
             await asyncio.sleep(0.1)

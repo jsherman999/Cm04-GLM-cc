@@ -150,7 +150,7 @@
                     </div>
                     <div class="current-host" id="currentHost">Starting scan...</div>
                     <div class="progress-actions">
-                        <button class="stop-button" onclick="scanner.stopScan()">Stop Scan</button>
+                        <button class="stop-button" onclick="stopScan()">Stop Scan</button>
                     </div>
                 </div>
             </section>
@@ -257,7 +257,7 @@
             <section class="debug-section">
                 <h2>Debug Console</h2>
                 <div class="debug-controls">
-                    <button class="debug-button" id="verboseButton" onclick="scanner.toggleVerboseMode()">Verbose: OFF</button>
+                    <button class="debug-button" id="verboseButton" onclick="toggleVerboseMode()">Verbose: OFF</button>
                     <button class="debug-button" onclick="clearDebugLogs()">Clear Logs</button>
                     <button class="debug-button" onclick="toggleDebugConsole()">Toggle Console</button>
                 </div>
