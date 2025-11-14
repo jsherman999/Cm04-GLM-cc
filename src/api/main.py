@@ -288,7 +288,7 @@ async def submit_scan_from_file(
         return {
             "job_id": job_id,
             "message": f"Scan job submitted successfully from {file.filename}",
-            "hosts_count": len(hosts),
+            "hosts_count": str(len(hosts)),
             "status_url": f"/api/v1/jobs/{job_id}"
         }
 
@@ -556,10 +556,14 @@ async def http_exception_handler(request, exc):
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     """Handle general exceptions"""
-    logger.error(f"Unhandled exception: {exc}")
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Convert exception to string safely
+    error_message = str(exc)
+    
     return JSONResponse(
         status_code=500,
-        content=ApiError(error="Internal server error").dict()
+        content={"error": "Internal server error", "detail": error_message}
     )
 
 
