@@ -560,14 +560,15 @@ class CM04Scanner {
             sum + host.users_with_access.length, 0);
         document.getElementById('totalUsers').textContent = totalUsers;
 
-        // Populate results table
+        // Populate results table with aggregated counts per host/path
         const tableBody = document.getElementById('resultsTableBody');
         tableBody.innerHTML = '';
 
         jobResult.results.forEach(hostResult => {
+            const row = tableBody.insertRow();
+            
             if (hostResult.users_with_access.length === 0) {
-                // Add row for host with no access
-                const row = tableBody.insertRow();
+                // No users with access
                 row.innerHTML = `
                     <td>${hostResult.hostname}</td>
                     <td>${hostResult.code_path}</td>
@@ -576,17 +577,20 @@ class CM04Scanner {
                     </td>
                 `;
             } else {
-                hostResult.users_with_access.forEach(access => {
-                    const row = tableBody.insertRow();
-                    row.innerHTML = `
-                        <td>${hostResult.hostname}</td>
-                        <td>${hostResult.code_path}</td>
-                        <td>${access.user_id}</td>
-                        <td>${access.login_method}</td>
-                        <td>${access.privilege_type}</td>
-                        <td>${access.privilege_source}</td>
-                    `;
-                });
+                // Count users by privilege type
+                const ownerCount = hostResult.users_with_access.filter(u => u.privilege_type === 'owner').length;
+                const groupCount = hostResult.users_with_access.filter(u => u.privilege_type === 'group').length;
+                const sudoCount = hostResult.users_with_access.filter(u => u.privilege_type === 'sudo').length;
+                const totalCount = hostResult.users_with_access.length;
+                
+                row.innerHTML = `
+                    <td>${hostResult.hostname}</td>
+                    <td>${hostResult.code_path}</td>
+                    <td>${totalCount}</td>
+                    <td>${ownerCount}</td>
+                    <td>${groupCount}</td>
+                    <td>${sudoCount}</td>
+                `;
             }
         });
 
