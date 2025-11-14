@@ -10,6 +10,7 @@ class CM04Scanner {
         this.verboseMode = false;
         this.debugLogBuffer = [];
         this.maxDebugLines = 500; // Keep last 500 lines in buffer
+        this.lastProcessedHost = null; // Track last host to avoid duplicate logging
         this.init();
     }
 
@@ -382,6 +383,7 @@ class CM04Scanner {
 
     startJobMonitoring(jobId) {
         this.currentJobId = jobId;
+        this.lastProcessedHost = null; // Reset for new job
 
         // Show progress section
         document.getElementById('uploadSection').style.display = 'none';
@@ -392,6 +394,10 @@ class CM04Scanner {
         document.getElementById('jobId').textContent = `Job ID: ${jobId}`;
         document.getElementById('jobStatus').textContent = 'RUNNING';
         document.getElementById('jobStatus').className = 'job-status';
+        document.getElementById('progressText').textContent = '0 / 0 hosts completed';
+        document.getElementById('progressPercent').textContent = '0%';
+        document.getElementById('progressFill').style.width = '0%';
+        document.getElementById('currentHost').textContent = 'Starting scan...';
 
         // Connect to WebSocket for real-time updates
         this.connectWebSocket(jobId);
@@ -434,11 +440,22 @@ class CM04Scanner {
     }
 
     handleJobUpdate(data) {
+        // Log the received update for debugging
+        if (this.verboseMode) {
+            console.log('[WebSocket Update]', data);
+        }
+        
+        // Update progress regardless of message type
+        if (data.status || data.completed_hosts !== undefined) {
+            this.updateProgress(data);
+        }
+        
+        // Handle specific message types
         if (data.type === 'progress') {
             this.updateProgress(data);
-        } else if (data.type === 'completed') {
+        } else if (data.type === 'completed' || data.status === 'completed') {
             this.handleJobCompleted(data);
-        } else if (data.type === 'error') {
+        } else if (data.type === 'error' || data.status === 'failed') {
             this.handleJobError(data);
         }
     }
@@ -446,16 +463,34 @@ class CM04Scanner {
     updateProgress(data) {
         const { completed_hosts, total_hosts, current_host, status } = data;
 
-        document.getElementById('progressText').textContent = `${completed_hosts} / ${total_hosts} hosts completed`;
+        // Update progress text and bar
+        const progressText = `${completed_hosts} / ${total_hosts} hosts completed`;
+        document.getElementById('progressText').textContent = progressText;
 
         const percent = total_hosts > 0 ? Math.round((completed_hosts / total_hosts) * 100) : 0;
         document.getElementById('progressPercent').textContent = `${percent}%`;
         document.getElementById('progressFill').style.width = `${percent}%`;
 
+        // Update current host display and log only when host changes
         if (current_host) {
             document.getElementById('currentHost').textContent = `Scanning: ${current_host}`;
-            // Log progress update as verbose
-            this.addDebugLog('info', `Processing host ${completed_hosts + 1}/${total_hosts}: ${current_host}`, true);
+            
+            // Only log when we move to a new host
+            if (current_host !== this.lastProcessedHost) {
+                this.lastProcessedHost = current_host;
+                const hostNumber = completed_hosts + 1; // The host currently being processed
+                
+                // Log as verbose (shows when verbose is ON)
+                this.addDebugLog('info', `Processing host ${hostNumber}/${total_hosts}: ${current_host}`, true);
+                
+                // Also log non-verbose summary every 5 hosts or when completed
+                if (hostNumber % 5 === 0 || completed_hosts === total_hosts) {
+                    this.addDebugLog('info', `Progress: ${completed_hosts}/${total_hosts} hosts completed (${percent}%)`, false);
+                }
+            }
+        } else if (completed_hosts === total_hosts && total_hosts > 0) {
+            document.getElementById('currentHost').textContent = 'All hosts processed';
+            this.addDebugLog('info', `Scan complete: ${completed_hosts}/${total_hosts} hosts processed`, false);
         }
 
         // Update summary cards if results section is visible
@@ -800,6 +835,7 @@ class CM04Scanner {
             timestamp,
             level,
             message,
+            verbose,
             text: `[${timestamp}] ${level.toUpperCase()}: ${message}`
         };
 
@@ -815,22 +851,19 @@ class CM04Scanner {
         const debugLogs = document.getElementById('debugLogs');
         const logLine = document.createElement('div');
         logLine.className = `log-entry log-${level}`;
+        if (verbose) {
+            logLine.classList.add('log-verbose');
+        }
         logLine.textContent = logEntry.text;
         debugLogs.appendChild(logLine);
-
-        // Keep only last 20 lines visible in DOM for performance
-        const lines = debugLogs.querySelectorAll('.log-entry');
-        if (lines.length > 20) {
-            for (let i = 0; i < lines.length - 20; i++) {
-                lines[i].remove();
-            }
-        }
 
         // Auto-scroll to bottom
         debugLogs.scrollTop = debugLogs.scrollHeight;
 
         // Also log to console for development
-        console.log(`[CM-04 Scanner] ${logEntry.text}`);
+        if (this.verboseMode || !verbose) {
+            console.log(`[CM-04 Scanner] ${logEntry.text}`);
+        }
     }
 
     showLoading(message = 'Loading...') {

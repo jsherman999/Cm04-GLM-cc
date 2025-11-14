@@ -51,10 +51,11 @@ class JobState:
 class CM04Scanner:
     """Main CM-04 scanner class"""
 
-    def __init__(self):
+    def __init__(self, websocket_manager=None):
         self.jobs: Dict[str, JobState] = {}
         self.active_scans: Set[str] = set()
         self._initialized = False
+        self.websocket_manager = websocket_manager
 
     async def initialize(self):
         """Initialize scanner components"""
@@ -193,17 +194,19 @@ class CM04Scanner:
 
                 job_state.current_host_index += 1
                 
-                # Send progress update after each host completes
-                current_host = batch[j].hostname if j < len(batch) else None
-                await self.websocket_manager.broadcast_job_progress(
-                    job_state.job_id,
-                    {
-                        "current_host": current_host,
-                        "completed_hosts": job_state.completed_hosts,
-                        "total_hosts": len(job_state.hosts),
-                        "failed_hosts": job_state.failed_hosts
-                    }
-                )
+                # Send progress update after each host completes (if websocket manager available)
+                if self.websocket_manager:
+                    current_host = batch[j].hostname if j < len(batch) else None
+                    await self.websocket_manager.broadcast_job_progress(
+                        job_state.job_id,
+                        {
+                            "current_host": current_host,
+                            "completed_hosts": job_state.completed_hosts,
+                            "total_hosts": job_state.total_hosts,
+                            "failed_hosts": job_state.failed_hosts,
+                            "status": "running"
+                        }
+                    )
 
             # Small delay between batches
             await asyncio.sleep(0.1)

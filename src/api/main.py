@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
     # Startup
     logger.info("Starting CM-04 Scanner API")
-    scanner = CM04Scanner()
+    scanner = CM04Scanner(websocket_manager=websocket_manager)
     await scanner.initialize()
     logger.info("Scanner initialized successfully")
 
