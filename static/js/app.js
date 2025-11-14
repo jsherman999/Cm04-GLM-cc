@@ -932,7 +932,8 @@ class CM04Scanner {
                     </div>
                     <div class="audit-item-actions">
                         ${audit.status === 'completed' || audit.status === 'failed'
-                            ? `<button class="audit-action-btn" onclick="rerunAudit('${audit.job_id}')">Rerun</button>`
+                            ? `<button class="audit-action-btn" onclick="rerunAudit('${audit.job_id}')">Rerun</button>
+                               <button class="audit-action-btn" onclick="exportFailures('${audit.job_id}')">Export Failures</button>`
                             : audit.status === 'running'
                             ? `<button class="audit-action-btn" onclick="viewRunningAudit('${audit.job_id}')">View</button>
                                <button class="audit-action-btn stop" onclick="stopAuditFromHistory('${audit.job_id}')">Stop</button>`
@@ -1171,6 +1172,11 @@ function refreshAuditHistory() {
 
 function rerunAudit(jobId) {
     window.cm04Scanner.rerunAudit(jobId);
+}
+
+function exportFailures(jobId) {
+    // Download the failures CSV
+    window.open(`/api/v1/jobs/${jobId}/export-failures`, '_blank');
 }
 
 function archiveAudit(jobId) {

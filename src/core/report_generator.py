@@ -286,19 +286,56 @@ class ReportGenerator:
 <head>
     <title>CM-04 Compliance Report - {job_name}</title>
     <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        .header {{ background-color: #f5f5f5; padding: 20px; border-radius: 5px; }}
+        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }}
+        .header {{ background-color: #667eea; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }}
+        .header h1 {{ margin: 0 0 10px 0; }}
+        .header p {{ margin: 5px 0; opacity: 0.9; }}
         .summary {{ display: flex; flex-wrap: wrap; gap: 20px; margin: 20px 0; }}
-        .metric {{ background-color: #e9ecef; padding: 15px; border-radius: 5px; min-width: 150px; }}
-        .metric h3 {{ margin: 0 0 10px 0; color: #495057; }}
+        .metric {{ background-color: white; padding: 15px; border-radius: 5px; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+        .metric h3 {{ margin: 0 0 10px 0; color: #495057; font-size: 14px; }}
         .metric .value {{ font-size: 24px; font-weight: bold; color: #007bff; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-        th {{ background-color: #f2f2f2; }}
+        .actions {{ margin: 20px 0; }}
+        .btn {{ 
+            background-color: #667eea; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            font-size: 14px;
+            margin-right: 10px;
+        }}
+        .btn:hover {{ background-color: #5568d3; }}
+        .btn-danger {{ background-color: #dc3545; }}
+        .btn-danger:hover {{ background-color: #c82333; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background-color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+        th, td {{ border: 1px solid #ddd; padding: 12px 8px; text-align: left; }}
+        th {{ background-color: #f2f2f2; font-weight: 600; }}
+        tr:hover {{ background-color: #f8f9fa; }}
+        .host-unreachable {{ background-color: #f8d7da; color: #721c24; }}
+        .host-unreachable td {{ border-color: #f5c6cb; }}
+        .path-not-found {{ color: #721c24; font-weight: 600; }}
+        .path-world-writable {{ color: #004085; font-weight: 600; background-color: #cce5ff; padding: 2px 6px; border-radius: 3px; }}
         .compliant {{ background-color: #d4edda; }}
-        .non-compliant {{ background-color: #f8d7da; }}
         .error {{ background-color: #fff3cd; }}
+        .status-ok {{ color: #28a745; font-weight: 600; }}
+        .status-error {{ color: #dc3545; font-weight: 600; }}
+        .legend {{ margin: 20px 0; padding: 15px; background-color: white; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+        .legend h3 {{ margin: 0 0 10px 0; }}
+        .legend-item {{ display: inline-block; margin-right: 20px; margin-bottom: 10px; }}
+        .legend-color {{ display: inline-block; width: 20px; height: 20px; margin-right: 5px; vertical-align: middle; border: 1px solid #ddd; }}
     </style>
+    <script>
+        function exportFailures() {{
+            const jobId = "{job_id}";
+            window.location.href = `/api/v1/jobs/${{jobId}}/export-failures`;
+        }}
+        
+        function downloadCSV() {{
+            const jobId = "{job_id}";
+            window.location.href = `/reports/cm04_report_${{jobId}}_*?.csv`;
+        }}
+    </script>
 </head>
 <body>
     <div class="header">
@@ -306,6 +343,27 @@ class ReportGenerator:
         <p><strong>Job ID:</strong> {job_id}</p>
         <p><strong>Job Name:</strong> {job_name}</p>
         <p><strong>Generated:</strong> {generated_time}</p>
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-danger" onclick="exportFailures()">Export Failures (CSV)</button>
+        <button class="btn" onclick="downloadCSV()">Download Full Report (CSV)</button>
+    </div>
+
+    <div class="legend">
+        <h3>Legend</h3>
+        <div class="legend-item">
+            <span class="legend-color" style="background-color: #f8d7da;"></span>
+            <span>Host Unreachable (entire row red)</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background-color: white; color: #721c24; font-weight: bold;">P</span>
+            <span>Path Does Not Exist (path in red)</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color" style="background-color: #cce5ff;"></span>
+            <span>Path World-Writable (path in blue, not a failure)</span>
+        </div>
     </div>
 
     <div class="summary">
@@ -376,24 +434,63 @@ class ReportGenerator:
 </html>
             """
 
-            # Generate host rows
+            # Generate host rows with enhanced error detection
             host_rows = ""
-            for host_summary in summary["host_access_summary"]:
-                status_class = "compliant"
-                if host_summary["has_error"]:
-                    status_class = "error"
-                elif host_summary["users_with_access"] > 10:  # Arbitrary threshold
-                    status_class = "non-compliant"
+            for host_result in job_result.results:
+                # Determine failure type from error_message
+                is_host_unreachable = False
+                is_path_not_found = False
+                is_world_writable = False
+                
+                if host_result.error_message:
+                    error_lower = host_result.error_message.lower()
+                    if "cannot connect" in error_lower or "ssh connection" in error_lower or "unreachable" in error_lower:
+                        is_host_unreachable = True
+                    elif "path does not exist" in error_lower or "no such file" in error_lower:
+                        is_path_not_found = True
+                    elif "world" in error_lower and "writable" in error_lower:
+                        is_world_writable = True
+                
+                # Set row class
+                row_class = ""
+                if is_host_unreachable:
+                    row_class = "host-unreachable"
+                
+                # Format path with appropriate styling
+                path_display = host_result.code_path
+                if is_path_not_found:
+                    path_display = f'<span class="path-not-found">{host_result.code_path}</span>'
+                elif is_world_writable:
+                    path_display = f'<span class="path-world-writable">{host_result.code_path}</span>'
+                
+                # Format status
+                if host_result.error_message:
+                    if is_host_unreachable:
+                        status_display = '<span class="status-error">HOST UNREACHABLE</span>'
+                    elif is_path_not_found:
+                        status_display = '<span class="status-error">PATH NOT FOUND</span>'
+                    elif is_world_writable:
+                        status_display = '<span class="status-ok">WORLD WRITABLE</span>'
+                    else:
+                        status_display = '<span class="status-error">ERROR</span>'
+                else:
+                    status_display = '<span class="status-ok">OK</span>'
+                
+                # Count access types
+                users_count = len(host_result.users_with_access)
+                owner_count = len([a for a in host_result.users_with_access if a.privilege_type.value == "owner"])
+                sudo_count = len([a for a in host_result.users_with_access if a.privilege_type.value == "sudo"])
+                group_count = len([a for a in host_result.users_with_access if a.privilege_type.value == "group"])
 
                 host_rows += f"""
-                <tr class="{status_class}">
-                    <td>{host_summary["hostname"]}</td>
-                    <td>{host_summary["code_path"]}</td>
-                    <td>{host_summary["users_with_access"]}</td>
-                    <td>{host_summary["owner_access"]}</td>
-                    <td>{host_summary["group_access"]}</td>
-                    <td>{host_summary["sudo_access"]}</td>
-                    <td>{'ERROR' if host_summary['has_error'] else 'OK'}</td>
+                <tr class="{row_class}">
+                    <td>{host_result.hostname}</td>
+                    <td>{path_display}</td>
+                    <td>{users_count}</td>
+                    <td>{owner_count}</td>
+                    <td>{sudo_count}</td>
+                    <td>{group_count}</td>
+                    <td>{status_display}</td>
                 </tr>
                 """
 
@@ -422,6 +519,61 @@ class ReportGenerator:
 
         except Exception as e:
             logger.error(f"Error generating HTML report: {e}")
+            raise
+
+    def generate_failures_csv(self, job_result: JobResult) -> Path:
+        """
+        Generate CSV report of only failures (host unreachable, path does not exist)
+        Format: hostname,path,failure_reason
+        Note: World-writable paths are NOT considered failures
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"cm04_failures_{job_result.job_id}_{timestamp}.csv"
+        filepath = self.reports_dir / filename
+
+        try:
+            with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['hostname', 'path', 'failure_reason']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                # Write header
+                writer.writeheader()
+
+                # Write failure rows
+                for host_result in job_result.results:
+                    if host_result.error_message:
+                        error_lower = host_result.error_message.lower()
+                        
+                        # Check for host unreachable
+                        if "cannot connect" in error_lower or "ssh connection" in error_lower or "unreachable" in error_lower:
+                            # Split paths if multiple paths in code_path field
+                            paths = [p.strip() for p in host_result.code_path.split(',') if p.strip()]
+                            for path in paths:
+                                writer.writerow({
+                                    'hostname': host_result.hostname,
+                                    'path': path,
+                                    'failure_reason': 'host unreachable'
+                                })
+                        
+                        # Check for path does not exist
+                        elif "path does not exist" in error_lower or "no such file" in error_lower:
+                            # Split paths if multiple paths in code_path field
+                            paths = [p.strip() for p in host_result.code_path.split(',') if p.strip()]
+                            for path in paths:
+                                writer.writerow({
+                                    'hostname': host_result.hostname,
+                                    'path': path,
+                                    'failure_reason': 'path does not exist'
+                                })
+                        
+                        # Skip world-writable (not a failure)
+                        # Any other error types can be added here if needed
+
+            logger.info(f"Failures CSV generated: {filepath}")
+            return filepath
+
+        except Exception as e:
+            logger.error(f"Error generating failures CSV: {e}")
             raise
 
     async def generate_all_reports(self, job_result: JobResult) -> Dict[str, Path]:

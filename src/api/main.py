@@ -457,6 +457,29 @@ async def get_job_reports(job_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/jobs/{job_id}/export-failures")
+async def export_job_failures(job_id: str):
+    """Export failures (host unreachable, path does not exist) as CSV"""
+    try:
+        job_result = scanner.get_job_result(job_id)
+        if not job_result:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Generate failures CSV
+        failures_csv_path = report_generator.generate_failures_csv(job_result)
+        
+        return FileResponse(
+            path=failures_csv_path,
+            media_type='text/csv',
+            filename=failures_csv_path.name
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting failures for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/reports")
 async def list_reports():
     """List all available reports"""
