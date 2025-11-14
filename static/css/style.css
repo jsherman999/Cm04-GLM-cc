@@ -202,6 +202,16 @@ body {
     border-color: #dc3545;
 }
 
+.audit-action-btn.stop {
+    color: #dc3545;
+}
+
+.audit-action-btn.stop:hover {
+    background: #dc3545;
+    color: white;
+    border-color: #dc3545;
+}
+
 .main-content-area {
     flex: 1;
     min-width: 0;
@@ -702,6 +712,27 @@ body {
 .current-host {
     color: #495057;
     font-style: italic;
+    margin-bottom: 1rem;
+}
+
+.progress-actions {
+    text-align: center;
+    margin-top: 1rem;
+}
+
+.stop-button {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 0.75rem 2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.3s;
+}
+
+.stop-button:hover {
+    background-color: #c82333;
 }
 
 /* Results Section */
@@ -826,18 +857,27 @@ body {
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.875rem;
+    transition: background-color 0.3s;
 }
 
 .debug-button:hover {
     background-color: #5a6268;
 }
 
+.debug-button.active {
+    background-color: #28a745;
+}
+
+.debug-button.active:hover {
+    background-color: #218838;
+}
+
 .debug-console {
-    background-color: #f8f9fa;
+    background-color: #1e1e1e;
     border: 1px solid #dee2e6;
     border-radius: 4px;
-    padding: 1rem;
-    max-height: 300px;
+    padding: 0.5rem;
+    height: 400px; /* Fixed height for ~20 lines */
     overflow-y: auto;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     font-size: 0.875rem;
@@ -845,7 +885,28 @@ body {
 }
 
 #debugLogs {
-    white-space: pre-wrap;
+    color: #d4d4d4;
+}
+
+.log-entry {
+    padding: 2px 0;
+    border-bottom: 1px solid #333;
+}
+
+.log-entry.log-info {
+    color: #4ec9b0;
+}
+
+.log-entry.log-error {
+    color: #f48771;
+}
+
+.log-entry.log-warning {
+    color: #dcdcaa;
+}
+
+.log-entry.log-verbose {
+    color: #9cdcfe;
 }
 
 /* Footer */

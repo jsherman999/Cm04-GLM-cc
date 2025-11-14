@@ -329,6 +329,21 @@ async def get_job_progress(job_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Cancel a running job"""
+    try:
+        success = await scanner.cancel_job(job_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
+        return {"message": "Job cancelled successfully", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/jobs")
 async def list_jobs(
     status: Optional[JobStatus] = None,

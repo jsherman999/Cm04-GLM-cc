@@ -7,6 +7,9 @@ class CM04Scanner {
         this.websocket = null;
         this.selectedFiles = [];
         this.currentComparison = null;
+        this.verboseMode = false;
+        this.debugLogBuffer = [];
+        this.maxDebugLines = 500; // Keep last 500 lines in buffer
         this.init();
     }
 
@@ -441,7 +444,7 @@ class CM04Scanner {
     }
 
     updateProgress(data) {
-        const { completed_hosts, total_hosts, current_host } = data;
+        const { completed_hosts, total_hosts, current_host, status } = data;
 
         document.getElementById('progressText').textContent = `${completed_hosts} / ${total_hosts} hosts completed`;
 
@@ -451,6 +454,8 @@ class CM04Scanner {
 
         if (current_host) {
             document.getElementById('currentHost').textContent = `Scanning: ${current_host}`;
+            // Log progress update
+            this.addDebugLog('info', `Processing host ${completed_hosts + 1}/${total_hosts}: ${current_host}`);
         }
 
         // Update summary cards if results section is visible
@@ -674,6 +679,67 @@ class CM04Scanner {
         this.addDebugLog('info', 'Ready for new scan');
     }
 
+    async stopScan() {
+        if (!this.currentJobId) {
+            this.showError('No active scan to stop');
+            return;
+        }
+
+        try {
+            this.showLoading('Stopping scan...');
+            
+            const response = await fetch(`/api/v1/jobs/${this.currentJobId}/cancel`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to stop scan');
+            }
+
+            // Close WebSocket
+            if (this.websocket) {
+                this.websocket.close();
+            }
+
+            document.getElementById('jobStatus').textContent = 'CANCELLED';
+            document.getElementById('jobStatus').className = 'job-status failed';
+            document.getElementById('currentHost').textContent = 'Scan stopped by user';
+
+            this.hideLoading();
+            this.addDebugLog('info', `Scan ${this.currentJobId} stopped by user`);
+
+        } catch (error) {
+            this.hideLoading();
+            this.showError(`Failed to stop scan: ${error.message}`);
+            this.addDebugLog('error', `Failed to stop scan: ${error.message}`);
+        }
+    }
+
+    async stopAuditFromHistory(jobId) {
+        try {
+            this.showLoading('Stopping audit...');
+            
+            const response = await fetch(`/api/v1/jobs/${jobId}/cancel`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to stop audit');
+            }
+
+            this.hideLoading();
+            this.addDebugLog('info', `Audit ${jobId} stopped`);
+            
+            // Refresh audit history
+            await this.loadAuditHistory();
+
+        } catch (error) {
+            this.hideLoading();
+            this.showError(`Failed to stop audit: ${error.message}`);
+            this.addDebugLog('error', `Failed to stop audit: ${error.message}`);
+        }
+    }
+
     async loadExistingJobs() {
         try {
             const response = await fetch('/api/v1/jobs?limit=10');
@@ -699,7 +765,8 @@ class CM04Scanner {
     }
 
     clearDebugLogs() {
-        document.getElementById('debugLogs').textContent = '';
+        this.debugLogBuffer = [];
+        document.getElementById('debugLogs').innerHTML = '';
         this.addDebugLog('info', 'Debug logs cleared');
     }
 
@@ -708,15 +775,62 @@ class CM04Scanner {
         debugConsole.style.display = debugConsole.style.display === 'none' ? 'block' : 'none';
     }
 
-    addDebugLog(level, message) {
-        const debugLogs = document.getElementById('debugLogs');
+    toggleVerboseMode() {
+        this.verboseMode = !this.verboseMode;
+        const button = document.getElementById('verboseButton');
+        if (this.verboseMode) {
+            button.classList.add('active');
+            button.textContent = 'Verbose: ON';
+            this.addDebugLog('info', 'Verbose mode enabled');
+        } else {
+            button.classList.remove('active');
+            button.textContent = 'Verbose: OFF';
+            this.addDebugLog('info', 'Verbose mode disabled');
+        }
+    }
+
+    addDebugLog(level, message, verbose = false) {
+        // Skip verbose messages if verbose mode is off
+        if (verbose && !this.verboseMode) {
+            return;
+        }
+
         const timestamp = new Date().toLocaleTimeString();
-        const logEntry = `[${timestamp}] ${level.toUpperCase()}: ${message}\n`;
-        debugLogs.textContent += logEntry;
+        const logEntry = {
+            timestamp,
+            level,
+            message,
+            text: `[${timestamp}] ${level.toUpperCase()}: ${message}`
+        };
+
+        // Add to buffer
+        this.debugLogBuffer.push(logEntry);
+        
+        // Trim buffer if too large
+        if (this.debugLogBuffer.length > this.maxDebugLines) {
+            this.debugLogBuffer = this.debugLogBuffer.slice(-this.maxDebugLines);
+        }
+
+        // Update display
+        const debugLogs = document.getElementById('debugLogs');
+        const logLine = document.createElement('div');
+        logLine.className = `log-entry log-${level}`;
+        logLine.textContent = logEntry.text;
+        debugLogs.appendChild(logLine);
+
+        // Keep only last 20 lines visible in DOM for performance
+        const lines = debugLogs.querySelectorAll('.log-entry');
+        if (lines.length > 20) {
+            for (let i = 0; i < lines.length - 20; i++) {
+                lines[i].remove();
+            }
+        }
+
+        // Auto-scroll to bottom
         debugLogs.scrollTop = debugLogs.scrollHeight;
 
         // Also log to console for development
-        console.log(`[CM-04 Scanner] ${logEntry.trim()}`);
+        console.log(`[CM-04 Scanner] ${logEntry.text}`);
     }
 
     showLoading(message = 'Loading...') {
@@ -787,7 +901,8 @@ class CM04Scanner {
                         ${audit.status === 'completed' || audit.status === 'failed'
                             ? `<button class="audit-action-btn" onclick="rerunAudit('${audit.job_id}')">Rerun</button>`
                             : audit.status === 'running'
-                            ? `<button class="audit-action-btn" onclick="viewRunningAudit('${audit.job_id}')">View</button>`
+                            ? `<button class="audit-action-btn" onclick="viewRunningAudit('${audit.job_id}')">View</button>
+                               <button class="audit-action-btn stop" onclick="scanner.stopAuditFromHistory('${audit.job_id}')">Stop</button>`
                             : ''
                         }
                         ${audit.status === 'completed' || audit.status === 'failed'

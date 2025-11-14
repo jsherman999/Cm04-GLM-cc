@@ -149,6 +149,9 @@
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
                     <div class="current-host" id="currentHost">Starting scan...</div>
+                    <div class="progress-actions">
+                        <button class="stop-button" onclick="scanner.stopScan()">Stop Scan</button>
+                    </div>
                 </div>
             </section>
 
@@ -251,14 +254,15 @@
             </section>
 
             <!-- Debug Section -->
-            <section class="debug-section" id="debugSection">
+            <section class="debug-section">
                 <h2>Debug Console</h2>
                 <div class="debug-controls">
+                    <button class="debug-button" id="verboseButton" onclick="scanner.toggleVerboseMode()">Verbose: OFF</button>
                     <button class="debug-button" onclick="clearDebugLogs()">Clear Logs</button>
                     <button class="debug-button" onclick="toggleDebugConsole()">Toggle Console</button>
                 </div>
                 <div class="debug-console" id="debugConsole">
-                    <div id="debugLogs"></div>
+                    <div id="debugLogs" class="debug-logs"></div>
                 </div>
             </section>
                 </div><!-- close main-content-area -->

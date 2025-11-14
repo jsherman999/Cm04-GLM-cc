@@ -66,6 +66,29 @@ class CM04Scanner:
         self._initialized = True
         logger.info("CM-04 scanner initialized")
 
+    async def cancel_job(self, job_id: str) -> bool:
+        """Cancel a running job"""
+        if job_id not in self.jobs:
+            logger.warning(f"Cannot cancel job {job_id}: not found")
+            return False
+        
+        job_state = self.jobs[job_id]
+        
+        if job_state.status not in [JobStatus.PENDING, JobStatus.RUNNING]:
+            logger.warning(f"Cannot cancel job {job_id}: status is {job_state.status}")
+            return False
+        
+        # Mark job as cancelled
+        job_state.status = JobStatus.FAILED
+        job_state.error_message = "Cancelled by user"
+        job_state.completed_at = datetime.utcnow()
+        
+        # Remove from active scans
+        self.active_scans.discard(job_id)
+        
+        logger.info(f"Job {job_id} cancelled")
+        return True
+
     async def cleanup(self):
         """Cleanup scanner resources"""
         logger.info("Cleaning up CM-04 scanner")
