@@ -11,6 +11,7 @@ class CM04Scanner {
         this.debugLogBuffer = [];
         this.maxDebugLines = 500; // Keep last 500 lines in buffer
         this.lastProcessedHost = null; // Track last host to avoid duplicate logging
+        this.debugConsoleVisible = true;
         this.init();
     }
 
@@ -52,6 +53,15 @@ class CM04Scanner {
 
         // Path check export button
         document.getElementById('exportPathCheckButton').addEventListener('click', () => this.exportPathCheckResults());
+
+        // Debug console toggle
+        const debugToggleButton = document.getElementById('debugToggleButton');
+        if (debugToggleButton) {
+            debugToggleButton.addEventListener('click', () => this.toggleDebugConsole());
+        }
+
+        // Ensure debug console state matches button label
+        this.setDebugConsoleVisibility(true);
 
         // Add first host entry for manual mode
         this.addHostEntry();
@@ -394,7 +404,7 @@ class CM04Scanner {
         document.getElementById('jobId').textContent = `Job ID: ${jobId}`;
         document.getElementById('jobStatus').textContent = 'RUNNING';
         document.getElementById('jobStatus').className = 'job-status';
-        document.getElementById('progressText').textContent = '0 / 0 hosts completed';
+        document.getElementById('progressText').textContent = '0 / 0 hosts processed';
         document.getElementById('progressPercent').textContent = '0%';
         document.getElementById('progressFill').style.width = '0%';
         document.getElementById('currentHost').textContent = 'Starting scan...';
@@ -461,13 +471,24 @@ class CM04Scanner {
     }
 
     updateProgress(data) {
-        const { completed_hosts, total_hosts, current_host, status } = data;
+        let { completed_hosts = 0, total_hosts = 0, current_host } = data;
+        completed_hosts = Number(completed_hosts) || 0;
+        total_hosts = Number(total_hosts) || 0;
+        const failed_hosts = Number(data.failed_hosts ?? 0) || 0;
+        const processed_hosts = total_hosts > 0
+            ? Math.min(completed_hosts + failed_hosts, total_hosts)
+            : completed_hosts + failed_hosts;
 
         // Update progress text and bar
-        const progressText = `${completed_hosts} / ${total_hosts} hosts completed`;
-        document.getElementById('progressText').textContent = progressText;
+        const statusParts = [`${processed_hosts} / ${total_hosts} hosts processed`];
+        const detailParts = [`✓ ${completed_hosts}`];
+        if (failed_hosts > 0) {
+            detailParts.push(`✗ ${failed_hosts}`);
+        }
+        statusParts.push(`(${detailParts.join(', ')})`);
+        document.getElementById('progressText').textContent = statusParts.join(' ');
 
-        const percent = total_hosts > 0 ? Math.round((completed_hosts / total_hosts) * 100) : 0;
+        const percent = total_hosts > 0 ? Math.round((processed_hosts / total_hosts) * 100) : 0;
         document.getElementById('progressPercent').textContent = `${percent}%`;
         document.getElementById('progressFill').style.width = `${percent}%`;
 
@@ -475,27 +496,27 @@ class CM04Scanner {
         if (current_host) {
             document.getElementById('currentHost').textContent = `Scanning: ${current_host}`;
             
-            // Only log when we move to a new host
             if (current_host !== this.lastProcessedHost) {
                 this.lastProcessedHost = current_host;
-                const hostNumber = completed_hosts + 1; // The host currently being processed
-                
-                // Log as verbose (shows when verbose is ON)
-                this.addDebugLog('info', `Processing host ${hostNumber}/${total_hosts}: ${current_host}`, true);
-                
-                // Also log non-verbose summary every 5 hosts or when completed
-                if (hostNumber % 5 === 0 || completed_hosts === total_hosts) {
-                    this.addDebugLog('info', `Progress: ${completed_hosts}/${total_hosts} hosts completed (${percent}%)`, false);
+                const summary = `Processed ${processed_hosts}/${total_hosts} hosts (✓${completed_hosts}` +
+                    (failed_hosts ? `, ✗${failed_hosts}` : '') + ')';
+                this.addDebugLog('info', `${summary} - Active host: ${current_host}`, true);
+
+                const shouldLogSummary = processed_hosts > 0 &&
+                    (processed_hosts % 5 === 0 || processed_hosts === total_hosts);
+                if (shouldLogSummary) {
+                    this.addDebugLog('info', `Progress: ${processed_hosts}/${total_hosts} hosts processed (${percent}%)`, false);
                 }
             }
-        } else if (completed_hosts === total_hosts && total_hosts > 0) {
+        } else if (processed_hosts === total_hosts && total_hosts > 0) {
             document.getElementById('currentHost').textContent = 'All hosts processed';
-            this.addDebugLog('info', `Scan complete: ${completed_hosts}/${total_hosts} hosts processed`, false);
+            this.addDebugLog('info', `Scan complete: ${processed_hosts}/${total_hosts} hosts processed`, false);
         }
 
         // Update summary cards if results section is visible
         if (document.getElementById('resultsSection').style.display !== 'none') {
             document.getElementById('completedHosts').textContent = completed_hosts;
+            document.getElementById('failedHosts').textContent = failed_hosts;
             document.getElementById('totalHosts').textContent = total_hosts;
         }
     }
@@ -805,9 +826,22 @@ class CM04Scanner {
         this.addDebugLog('info', 'Debug logs cleared');
     }
 
-    toggleDebugConsole() {
+    setDebugConsoleVisibility(isVisible) {
+        this.debugConsoleVisible = isVisible;
         const debugConsole = document.getElementById('debugConsole');
-        debugConsole.style.display = debugConsole.style.display === 'none' ? 'block' : 'none';
+        if (debugConsole) {
+            debugConsole.style.display = isVisible ? 'block' : 'none';
+        }
+
+        const toggleButton = document.getElementById('debugToggleButton');
+        if (toggleButton) {
+            toggleButton.textContent = isVisible ? 'Hide Console' : 'Show Console';
+            toggleButton.setAttribute('aria-pressed', isVisible ? 'true' : 'false');
+        }
+    }
+
+    toggleDebugConsole() {
+        this.setDebugConsoleVisibility(!this.debugConsoleVisible);
     }
 
     toggleVerboseMode() {

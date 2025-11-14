@@ -96,6 +96,7 @@ class JobProgress(BaseModel):
     status: JobStatus
     completed_hosts: int
     total_hosts: int
+    failed_hosts: int = Field(default=0, description="Number of hosts that failed during the run")
     current_host: Optional[str] = None
     error_message: Optional[str] = None
 

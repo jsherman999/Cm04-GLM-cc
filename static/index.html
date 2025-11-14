@@ -257,9 +257,9 @@
             <section class="debug-section">
                 <h2>Debug Console</h2>
                 <div class="debug-controls">
-                    <button class="debug-button" id="verboseButton" onclick="toggleVerboseMode()">Verbose: OFF</button>
-                    <button class="debug-button" onclick="clearDebugLogs()">Clear Logs</button>
-                    <button class="debug-button" onclick="toggleDebugConsole()">Toggle Console</button>
+                    <button class="debug-button" id="verboseButton" type="button" onclick="toggleVerboseMode()">Verbose: OFF</button>
+                    <button class="debug-button" type="button" onclick="clearDebugLogs()">Clear Logs</button>
+                    <button class="debug-button" id="debugToggleButton" type="button" aria-pressed="true">Hide Console</button>
                 </div>
                 <div class="debug-console" id="debugConsole">
                     <div id="debugLogs" class="debug-logs"></div>

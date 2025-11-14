@@ -164,6 +164,7 @@ Get lightweight progress information for a job.
   "job_id": "abc123-def456-ghi789",
   "status": "running",
   "completed_hosts": 15,
+  "failed_hosts": 1,
   "total_hosts": 25,
   "current_host": "server20.example.com",
   "error_message": null
@@ -375,6 +376,7 @@ Connect to receive real-time updates for a specific job.
   "job_id": "abc123-def456-ghi789",
   "status": "running",
   "completed_hosts": 15,
+  "failed_hosts": 1,
   "total_hosts": 25,
   "current_host": "server20.example.com",
   "error_message": null

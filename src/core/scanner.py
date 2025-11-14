@@ -324,6 +324,7 @@ class CM04Scanner:
             status=job_state.status,
             completed_hosts=job_state.completed_hosts,
             total_hosts=job_state.total_hosts,
+            failed_hosts=job_state.failed_hosts,
             current_host=current_host,
             error_message=job_state.error_message
         )
